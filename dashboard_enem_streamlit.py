@@ -23,20 +23,20 @@ DB_CONFIG = {
 }
 
 Q005_MAP = {
-    'A': 'Nenhuma Renda', 'B': 'Até R$ 1.320,00', 'C': 'De R$ 1.320,01 a R$ 1.980,00', 
-    'D': 'De R$ 1.980,01 a R$ 2.640,00', 'E': 'De R$ 2.640,01 a R$ 3.300,00', 
-    'F': 'De R$ 3.300,01 a R$ 3.960,00', 'G': 'De R$ 3.960,01 a R$ 5.280,00', 
-    'H': 'De R$ 5.280,01 a R$ R$ 6.600,00', 'I': 'De R$ 6.600,01 a R$ 7.920,00', 
-    'J': 'De R$ 7.920,01 a R$ 9.240,00', 'K': 'De R$ 9.240,01 a R$ 10.560,00', 
-    'L': 'De R$ 10.560,01 a R$ 11.880,00', 'M': 'De R$ 11.880,01 a R$ 13.200,00', 
-    'N': 'De R$ 13.200,01 a R$ 15.840,00', 'O': 'De R$ 15.840,01 a R$ 19.800,00', 
-    'P': 'Mais de R$ 19.800,00', 'Q': 'Não Declarado' 
+    'A': 'Nenhuma Renda', 'B': 'Até R$ 1.320,00', 'C': 'De R$ 1.320,01 a R$ 1.980,00',
+    'D': 'De R$ 1.980,01 a R$ 2.640,00', 'E': 'De R$ 2.640,01 a R$ 3.300,00',
+    'F': 'De R$ 3.300,01 a R$ 3.960,00', 'G': 'De R$ 3.960,01 a R$ 5.280,00',
+    'H': 'De R$ 5.280,01 a R$ 6.600,00', 'I': 'De R$ 6.600,01 a R$ 7.920,00',
+    'J': 'De R$ 7.920,01 a R$ 9.240,00', 'K': 'De R$ 9.240,01 a R$ 10.560,00',
+    'L': 'De R$ 10.560,01 a R$ 11.880,00', 'M': 'De R$ 11.880,01 a R$ 13.200,00',
+    'N': 'De R$ 13.200,01 a R$ 15.840,00', 'O': 'De R$ 15.840,01 a R$ 19.800,00',
+    'P': 'Mais de R$ 19.800,00', 'Q': 'Não Declarado'
 }
 
 escolaridade_map = {
-    'A': 'A - Nenhuma/Incompleto', 'B': 'B - Fund. Completo', 
-    'C': 'C - Médio Incompleto', 'D': 'D - Médio Completo', 
-    'E': 'E - Superior Incompleto', 'F': 'F - Superior Completo', 
+    'A': 'A - Nenhuma/Incompleto', 'B': 'B - Fund. Completo',
+    'C': 'C - Médio Incompleto', 'D': 'D - Médio Completo',
+    'E': 'E - Superior Incompleto', 'F': 'F - Superior Completo',
     'G': 'G - Pós-Graduação', 'H': 'H - Não Sabe'
 }
 
@@ -45,9 +45,6 @@ def load_data(sample_size=50000):
     try:
         connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
         engine = create_engine(connection_string, pool_pre_ping=True)
-        
-        # SOLUÇÃO ATUALIZADA: LEFT JOIN usando nu_sequencial (provável ID na tabela de resultados) 
-        # e CAST para contornar a ausência de FK e a incompatibilidade de tipos.
         query = f"""
             SELECT 
                 p.q001 as escolaridade_pai,
@@ -91,12 +88,15 @@ def load_data(sample_size=50000):
         st.error(error_message)
         return pd.DataFrame()
 
+
 def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
     df['faixa_renda_legivel'] = df['faixa_renda'].map(Q005_MAP).fillna('Desconhecido')
     df['sexo'] = df['sexo'].replace({'M': 'Masculino', 'F': 'Feminino'})
     df['escolaridade_pai'] = df['escolaridade_pai'].replace(escolaridade_map)
     df['escolaridade_mae'] = df['escolaridade_mae'].replace(escolaridade_map)
     return df
+
 
 def create_pie_chart(df, column, title):
     counts = df[column].value_counts().reset_index()
@@ -105,11 +105,11 @@ def create_pie_chart(df, column, title):
     fig.update_layout(legend_title_text=column, margin=dict(t=30, b=0, l=0, r=0))
     return fig
 
+
 def create_income_bar_chart(df):
     renda_counts = df["faixa_renda_legivel"].value_counts().reset_index()
     renda_counts.columns = ["faixa_renda_legivel", "count"]
     ordered_categories = [Q005_MAP[k] for k in Q005_MAP.keys() if Q005_MAP[k] in renda_counts["faixa_renda_legivel"].tolist()]
-
     fig = px.bar(
         renda_counts,
         x="faixa_renda_legivel", y="count",
@@ -119,6 +119,7 @@ def create_income_bar_chart(df):
     )
     fig.update_xaxes(tickangle=45)
     return fig
+
 
 def create_notes_box_plot(df):
     notes_columns = [
@@ -133,9 +134,9 @@ def create_notes_box_plot(df):
     )
     return fig
 
+
 def create_income_vs_math_box_plot(df):
     ordered_categories = [Q005_MAP[k] for k in Q005_MAP.keys() if Q005_MAP[k] in df["faixa_renda_legivel"].tolist()]
-    
     fig = px.box(
         df,
         x="faixa_renda_legivel",
@@ -148,10 +149,10 @@ def create_income_vs_math_box_plot(df):
     fig.update_xaxes(tickangle=45)
     return fig
 
+
 def create_parent_education_vs_mean_note(df):
     df_agg = df.groupby(['escolaridade_pai', 'escolaridade_mae'])['nota_media_5_notas'].mean().reset_index()
     df_agg.rename(columns={'nota_media_5_notas': 'Nota Média'}, inplace=True)
-    
     fig = px.scatter(
         df_agg,
         x='escolaridade_pai',
@@ -165,63 +166,68 @@ def create_parent_education_vs_mean_note(df):
     fig.update_xaxes(tickangle=45)
     return fig
 
+
 def perform_predictive_analysis(df: pd.DataFrame):
     target = 'nota_media_5_notas'
     features = ['faixa_renda', 'escolaridade_pai', 'escolaridade_mae', 'cor_raca', 'sexo']
-    
-    # 1. Filtragem para garantir dados válidos para o ML
     df_ml = df.dropna(subset=features + [target]).copy()
-    df_ml = df_ml[df_ml['nota_media_5_notas'] > 0] # Remove notas zeradas/inválidas
-
+    df_ml = df_ml[df_ml[target] > 0]
     if len(df_ml) < 100:
         return 0, pd.DataFrame(columns=['Variável', 'Importância', 'Tipo'])
-
     X = df_ml[features]
     y = df_ml[target]
-
-    # ... Restante da lógica do Random Forest Regressor ...
     preprocessor = ColumnTransformer(
         transformers=[
             ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), features)
         ],
         remainder='passthrough'
     )
-
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
     X_train_processed = preprocessor.fit_transform(X_train)
     X_test_processed = preprocessor.transform(X_test)
-    
     model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1, max_depth=10, min_samples_leaf=5)
     model.fit(X_train_processed, y_train)
-
     y_pred = model.predict(X_test_processed)
     r2 = r2_score(y_test, y_pred)
-    
-    feature_names = preprocessor.named_transformers_['onehot'].get_feature_names_out(features)
-    
+    feature_names_raw = preprocessor.named_transformers_['onehot'].get_feature_names_out(features)
     importance_df = pd.DataFrame({
-        'Variável': feature_names,
+        'Variável_raw': feature_names_raw,
         'Importância': model.feature_importances_
     })
-    
+    def map_tipo(var_code):
+        if var_code.startswith('faixa_renda_'):
+            return 'Renda'
+        if var_code.startswith('escolaridade_pai_'):
+            return 'Escolaridade Pai'
+        if var_code.startswith('escolaridade_mae_'):
+            return 'Escolaridade Mãe'
+        if var_code.startswith('cor_raca_'):
+            return 'Cor/Raça'
+        if var_code.startswith('sexo_'):
+            return 'Sexo'
+        return 'Outros'
     def get_legible_name(var_code):
-        parts = var_code.split('_')
-        if parts[0] == 'faixa':
-            return Q005_MAP.get(parts[-1], f"Renda {parts[-1]}")
-        elif parts[0] == 'escolaridade':
-            parent_tag = 'Mãe' if 'mae' in var_code else 'Pai'
-            return f"{parent_tag}: {escolaridade_map.get(parts[-1], parts[-1])}"
-        elif parts[0] == 'cor':
-            return f"Cor/Raça: {parts[-1]}"
-        elif parts[0] == 'sexo':
-            return f"Sexo: {'Masculino' if parts[-1] == 'M' else 'Feminino'}"
+        if var_code.startswith('faixa_renda_'):
+            key = var_code.split('_')[-1]
+            return Q005_MAP.get(key, f'Renda {key}')
+        if var_code.startswith('escolaridade_pai_'):
+            key = var_code.split('_')[-1]
+            return f'Pai: {escolaridade_map.get(key, key)}'
+        if var_code.startswith('escolaridade_mae_'):
+            key = var_code.split('_')[-1]
+            return f'Mãe: {escolaridade_map.get(key, key)}'
+        if var_code.startswith('cor_raca_'):
+            key = var_code.split('_')[-1]
+            return f'Cor/Raça: {key}'
+        if var_code.startswith('sexo_'):
+            key = var_code.split('_')[-1]
+            return f'Sexo: {key}'
         return var_code
-
-    importance_df['Variável'] = importance_df['Variável'].apply(get_legible_name)
-    importance_df['Tipo'] = importance_df['Tipo'].apply(lambda x: x.split(':')[0].strip())
-    
-    return r2, importance_df.sort_values(by='Importância', ascending=False).reset_index(drop=True)
+    importance_df['Tipo'] = importance_df['Variável_raw'].apply(map_tipo)
+    importance_df['Variável'] = importance_df['Variável_raw'].apply(get_legible_name)
+    importance_df = importance_df[['Variável', 'Importância', 'Tipo']]
+    importance_df = importance_df.sort_values(by='Importância', ascending=False).reset_index(drop=True)
+    return r2, importance_df
 
 st.set_page_config(page_title="ENEM 2024 - Dashboard Socioeconômico", layout="wide")
 st.title("📊 ENEM 2024 - Dashboard Socioeconômico")
@@ -230,15 +236,13 @@ st.markdown("---")
 df_raw = load_data()
 
 if df_raw.empty:
-    st.error("⚠️ O DataFrame está vazio. O problema está na origem dos dados. A consulta com JOIN na tabela 'municipio' falhou. Verifique se a tabela 'municipio' existe e se a coluna 'codigo_municipio_dv' é a chave correta para o JOIN.")
+    st.error("⚠️ O DataFrame está vazio. Verifique a origem dos dados e a consulta SQL.")
     st.stop()
 
-df = decode_enem_categories(df_raw.copy())
+df = decode_enem_categories(df_raw)
 
-# 2. Filtragem de notas nulas e inválidas no Pandas, onde é mais seguro
 df_filtrado_notas = df.dropna(subset=['nota_media_5_notas']).copy()
 df_filtrado_notas = df_filtrado_notas[df_filtrado_notas['nota_media_5_notas'] > 0]
-df_filtrado_notas = df_filtrado_notas.rename(columns={'nota_media_5_notas': 'nota_media_valida'})
 
 st.success(f"✅ Dados carregados e processados: **{len(df):,}** (Brutos) / **{len(df_filtrado_notas):,}** (Com Nota Válida) registros na amostra!")
 
@@ -290,23 +294,19 @@ if len(df_filtrado) > 0:
 
     with col_met1:
         st.metric(label="Total de Participantes (Filtro)", value=f"{total_participantes:,}")
-    
     with col_met2:
         st.metric(label="Média Geral (5 Notas)", value=f"{media_geral:.2f} pts")
-        
     with col_met3:
         st.metric(label="Média Matemática", value=f"{media_matematica:.2f} pts")
-        
     with col_met4:
         st.metric(label="Média Redação", value=f"{media_redacao:.2f} pts")
-        
+
 st.markdown("---")
 
 tab1, tab2 = st.tabs(["Análise Exploratória", "Análise Preditiva e Relatório"])
 
 with tab1:
     st.subheader("Análise Socioeconômica e Notas do ENEM")
-    
     col1, col2 = st.columns(2)
     with col1:
         fig1 = create_pie_chart(df_filtrado, "escolaridade_pai", "Escolaridade do Pai")
@@ -326,7 +326,7 @@ with tab1:
         st.plotly_chart(fig4, use_container_width=True)
 
     st.markdown("---")
-    
+
     fig_parent_notes = create_parent_education_vs_mean_note(df_filtrado)
     st.plotly_chart(fig_parent_notes, use_container_width=True)
 
@@ -339,7 +339,7 @@ with tab1:
     with col6:
         fig6 = create_pie_chart(df_filtrado, "sexo", "Distribuição por Sexo")
         st.plotly_chart(fig6, use_container_width=True)
-        
+
     with st.expander("🔍 Detalhamento das Estatísticas"):
         st.subheader("Estatísticas Descritivas das Notas")
         st.dataframe(df_filtrado[[
@@ -351,20 +351,36 @@ with tab1:
         st.subheader("Distribuição de Idades")
         fig_idade = px.histogram(df_filtrado, x="idade", nbins=30, title="Distribuição de Idades dos Participantes")
         st.plotly_chart(fig_idade, use_container_width=True)
-        
+
         st.subheader("Distribuição por Cor/Raça")
         fig_cor = create_pie_chart(df_filtrado, "cor_raca", "Distribuição por Cor/Raça")
         st.plotly_chart(fig_cor, use_container_width=True)
 
+    st.markdown("---")
+
+    st.subheader("Análise Exploratória Adicional")
+    numeric_cols = [
+        "nota_cn_ciencias_da_natureza", "nota_ch_ciencias_humanas",
+        "nota_lc_linguagens_e_codigos", "nota_mt_matematica",
+        "nota_redacao", "nota_media_5_notas", "idade"
+    ]
+    corr = df_filtrado[numeric_cols].corr()
+    fig_corr = px.imshow(corr, text_auto=True, title="Matriz de Correlação entre Notas e Idade")
+    st.plotly_chart(fig_corr, use_container_width=True)
+
+    st.subheader("Top 10 Municípios por Nota Média")
+    top_mun = df_filtrado.groupby('nome_municipio').agg(
+        nota_media=('nota_media_5_notas', 'mean'),
+        participantes=('nota_media_5_notas', 'count')
+    ).reset_index().sort_values(by='nota_media', ascending=False).head(10)
+    st.dataframe(top_mun.style.format({'nota_media': '{:.2f}', 'participantes': '{:,}'}), use_container_width=True)
+
 with tab2:
     st.subheader("🔬 Análise Preditiva: Impacto Socioeconômico na Nota Média")
     st.markdown("""
-        O modelo **Random Forest Regressor** foi treinado para prever a **Nota Média (Target)** usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
-        O relatório abaixo mostra a **Importância das Variáveis**, indicando quais fatores têm maior influência na previsão da nota.
+        O modelo Random Forest Regressor foi treinado para prever a Nota Média (Target) usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
     """)
-
     r2, importance_df = perform_predictive_analysis(df_filtrado)
-
     if r2 == 0:
         st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo. O filtro atual resultou em poucos dados válidos para ML.")
     else:
@@ -376,17 +392,15 @@ with tab2:
                 help="Proporção da variância total das notas explicada pelas variáveis socioeconômicas no modelo. Valores mais próximos de 1 são melhores."
             )
         with col_samples:
-             st.metric(
+            st.metric(
                 label="Amostra para Predição", 
                 value=f"{len(df_filtrado):,}",
                 help="O modelo foi treinado com o subset de dados filtrado."
             )
-
         st.markdown("### Relatório Analítico: Importância das Variáveis")
         st.markdown("""
-            **Interpretação:** A **Importância** (soma total = 1.0) mede o quanto uma variável contribuiu para a precisão do modelo Random Forest. Valores mais altos indicam maior influência no desempenho do aluno.
+            Interpretação: A Importância (soma total = 1.0) mede o quanto uma variável contribuiu para a precisão do modelo Random Forest. Valores mais altos indicam maior influência no desempenho do aluno.
         """)
-
         fig_importance = px.bar(
             importance_df.head(20),
             x='Importância',
