@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import logging
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import r2_score
@@ -41,7 +41,7 @@ escolaridade_map = {
 }
 
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024...")
-def load_data(sample_size=100000):
+def load_data(sample_size=50000):
     try:
         connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
         engine = create_engine(connection_string, pool_pre_ping=True)
@@ -72,17 +72,17 @@ def load_data(sample_size=100000):
             ORDER BY RANDOM()
             LIMIT {sample_size};
         """
-        logging.info(f"Executando query com JOIN e LIMIT {sample_size}")
         df = pd.read_sql(query, engine)
         engine.dispose()
+        logging.info(f"Dados carregados com sucesso: {len(df)} registros.")
         return df
     except SQLAlchemyError as e:
-        error_message = f"🚨 Erro SQL ao carregar dados. Verifique a sintaxe da QUERY ou a chave de junção ('nu_sequencial'). Detalhes: {e}"
+        error_message = f"🚨 Erro SQL ao carregar dados. Detalhes: {e}"
         logging.error(error_message)
         st.error(error_message)
         return pd.DataFrame()
     except Exception as e:
-        error_message = f"❌ Erro geral ao carregar dados. Verifique a conexão. Detalhes: {e}"
+        error_message = f"❌ Erro geral ao carregar dados. Verifique a conexão/credenciais. Detalhes: {e}"
         logging.error(error_message)
         st.error(error_message)
         return pd.DataFrame()
@@ -144,14 +144,31 @@ def create_income_vs_math_box_plot(df):
     fig.update_xaxes(tickangle=45)
     return fig
 
+def create_parent_education_vs_mean_note(df):
+    df_agg = df.groupby(['escolaridade_pai', 'escolaridade_mae'])['nota_media_5_notas'].mean().reset_index()
+    df_agg.rename(columns={'nota_media_5_notas': 'Nota Média'}, inplace=True)
+    
+    fig = px.scatter(
+        df_agg,
+        x='escolaridade_pai',
+        y='escolaridade_mae',
+        size='Nota Média',
+        color='Nota Média',
+        title='Média das Notas vs. Escolaridade dos Pais',
+        labels={'escolaridade_pai': 'Escolaridade do Pai', 'escolaridade_mae': 'Escolaridade da Mãe'},
+        color_continuous_scale=px.colors.sequential.Plasma
+    )
+    fig.update_xaxes(tickangle=45)
+    return fig
+
 def perform_predictive_analysis(df: pd.DataFrame):
     target = 'nota_media_5_notas'
-    features = ['faixa_renda', 'escolaridade_pai', 'escolaridade_mae'] 
+    features = ['faixa_renda', 'escolaridade_pai', 'escolaridade_mae', 'cor_raca', 'sexo']
     
     df_clean = df.dropna(subset=features + [target]).copy()
 
     if len(df_clean) < 100:
-        return 0, pd.DataFrame(columns=['Variável', 'Coeficiente', 'Impacto'])
+        return 0, pd.DataFrame(columns=['Variável', 'Importância', 'Tipo'])
 
     X = df_clean[features]
     y = df_clean[target]
@@ -168,7 +185,7 @@ def perform_predictive_analysis(df: pd.DataFrame):
     X_train_processed = preprocessor.fit_transform(X_train)
     X_test_processed = preprocessor.transform(X_test)
     
-    model = LinearRegression()
+    model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1, max_depth=10, min_samples_leaf=5)
     model.fit(X_train_processed, y_train)
 
     y_pred = model.predict(X_test_processed)
@@ -176,37 +193,37 @@ def perform_predictive_analysis(df: pd.DataFrame):
     
     feature_names = preprocessor.named_transformers_['onehot'].get_feature_names_out(features)
     
-    coefficients_df = pd.DataFrame({
+    importance_df = pd.DataFrame({
         'Variável': feature_names,
-        'Coeficiente': model.coef_
+        'Importância': model.feature_importances_
     })
     
     def get_legible_name(var_code):
         parts = var_code.split('_')
-        feature = parts[0]
-        code = parts[-1]
-        
-        if feature == 'faixa':
-            return Q005_MAP.get(code, f"Renda {code}")
-        elif feature == 'escolaridade':
+        if parts[0] == 'faixa':
+            return Q005_MAP.get(parts[-1], f"Renda {parts[-1]}")
+        elif parts[0] == 'escolaridade':
             parent_tag = 'Mãe' if 'mae' in var_code else 'Pai'
-            return f"{parent_tag}: {escolaridade_map.get(code, code)}"
+            return f"{parent_tag}: {escolaridade_map.get(parts[-1], parts[-1])}"
+        elif parts[0] == 'cor':
+            return f"Cor/Raça: {parts[-1]}"
+        elif parts[0] == 'sexo':
+            return f"Sexo: {'Masculino' if parts[-1] == 'M' else 'Feminino'}"
         return var_code
 
-    coefficients_df['Variável'] = coefficients_df['Variável'].apply(get_legible_name)
-    coefficients_df['Impacto'] = np.where(coefficients_df['Coeficiente'] > 0, "POSITIVO", "NEGATIVO")
+    importance_df['Variável'] = importance_df['Variável'].apply(get_legible_name)
+    importance_df['Tipo'] = importance_df['Variável'].apply(lambda x: x.split(':')[0].strip())
     
-    intercept_df = pd.DataFrame({'Variável': ['Base (Intercepto)'], 'Coeficiente': [model.intercept_], 'Impacto': ['BASE']})
-    coefficients_df = pd.concat([intercept_df, coefficients_df], ignore_index=True)
-
-    return r2, coefficients_df.sort_values(by='Coeficiente', ascending=False)
+    return r2, importance_df.sort_values(by='Importância', ascending=False).reset_index(drop=True)
 
 st.set_page_config(page_title="ENEM 2024 - Dashboard Socioeconômico", layout="wide")
 st.title("📊 ENEM 2024 - Dashboard Socioeconômico")
 st.markdown("---")
 
 df_raw = load_data()
+
 if df_raw.empty:
+    st.error("⚠️ O DataFrame está vazio. Verifique a consulta SQL, as credenciais e o INNER JOIN. O problema está na origem dos dados.")
     st.stop()
 
 df = decode_enem_categories(df_raw.copy())
@@ -293,6 +310,11 @@ with tab1:
         st.plotly_chart(fig4, use_container_width=True)
 
     st.markdown("---")
+    
+    fig_parent_notes = create_parent_education_vs_mean_note(df_filtrado)
+    st.plotly_chart(fig_parent_notes, use_container_width=True)
+
+    st.markdown("---")
 
     col5, col6 = st.columns([3, 1])
     with col5:
@@ -321,42 +343,44 @@ with tab1:
 with tab2:
     st.subheader("🔬 Análise Preditiva: Impacto Socioeconômico na Nota Média")
     st.markdown("""
-        O modelo de **Regressão Linear Múltipla** foi treinado para prever a **Nota Média (Target)** usando a **Renda** e a **Escolaridade dos Pais (Preditores)**.
-        Os coeficientes mostram o impacto médio em pontos na nota para cada categoria.
+        O modelo **Random Forest Regressor** foi treinado para prever a **Nota Média (Target)** usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
+        O relatório abaixo mostra a **Importância das Variáveis**, indicando quais fatores têm maior influência na previsão da nota.
     """)
 
-    r2, coefficients_df = perform_predictive_analysis(df_filtrado)
+    r2, importance_df = perform_predictive_analysis(df_filtrado)
 
     if r2 == 0:
         st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo.")
     else:
-        col_r2, col_rmse = st.columns(2)
+        col_r2, col_samples = st.columns(2)
         with col_r2:
             st.metric(
                 label="Coeficiente de Determinação ($R^2$)", 
                 value=f"{r2:.4f}",
-                help="Proporção da variância total das notas que é explicada pelas variáveis socioeconômicas no modelo."
+                help="Proporção da variância total das notas explicada pelas variáveis socioeconômicas no modelo. Valores mais próximos de 1 são melhores."
             )
-        with col_rmse:
+        with col_samples:
              st.metric(
-                label="Tamanho da Amostra para Predição", 
+                label="Amostra para Predição", 
                 value=f"{len(df_filtrado):,}",
-                help="O modelo foi treinado com o subset de dados atual."
+                help="O modelo foi treinado com o subset de dados filtrado."
             )
 
-        st.markdown("### Relatório Analítico: Coeficientes do Modelo")
+        st.markdown("### Relatório Analítico: Importância das Variáveis")
         st.markdown("""
-            **Interpretação:** Cada coeficiente representa o **impacto médio em pontos na Nota Média do ENEM**. 
-            Um valor positivo significa um aumento na nota em relação ao grupo de referência implícito pelo OHE.
+            **Interpretação:** A **Importância** (soma total = 1.0) mede o quanto uma variável contribuiu para a precisão do modelo Random Forest. Valores mais altos indicam maior influência no desempenho do aluno.
         """)
 
-        st.dataframe(
-            coefficients_df.style.format({
-                "Coeficiente": "{:+.2f}"
-            }), 
-            use_container_width=True,
+        fig_importance = px.bar(
+            importance_df.head(20),
+            x='Importância',
+            y='Variável',
+            color='Tipo',
+            orientation='h',
+            title='Top 20 Fatores Socioeconômicos Mais Importantes (Random Forest)',
             height=600
         )
+        st.plotly_chart(fig_importance, use_container_width=True)
 
 st.markdown("---")
 with st.expander("📄 Ver Dados Brutos Filtrados"):
