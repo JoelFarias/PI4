@@ -46,8 +46,8 @@ def load_data(sample_size=50000):
         connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
         engine = create_engine(connection_string, pool_pre_ping=True)
         
-        # CORREÇÃO: JOIN de 3 tabelas para obter Socioeconômico (p), Notas (r) e Município (m).
-        # A fonte do Q001/Q002/Q005 é a tabela 'participantes' (p).
+        # SOLUÇÃO DEFINITIVA: LEFT JOIN de 3 tabelas para manter todos os participantes (p)
+        # e tentar buscar notas (r) e município (m)
         query = f"""
             SELECT 
                 p.q001 as escolaridade_pai,
@@ -66,9 +66,9 @@ def load_data(sample_size=50000):
                 r.nota_redacao,
                 r.nota_media_5_notas
             FROM ed_enem_2024_participantes p
-            INNER JOIN ed_enem_2024_resultados_amos_per r
+            LEFT JOIN ed_enem_2024_resultados_amos_per r
                 ON p.nu_inscricao = r.nu_inscricao
-            INNER JOIN municipio m
+            LEFT JOIN municipio m
                 ON r.co_municipio_prova = m.codigo_municipio_dv
             WHERE p.q001 IS NOT NULL 
               AND p.q002 IS NOT NULL 
@@ -78,10 +78,10 @@ def load_data(sample_size=50000):
         """
         df = pd.read_sql(query, engine)
         engine.dispose()
-        logging.info(f"Carga com JOIN de 3 tabelas: {len(df)} registros carregados.")
+        logging.info(f"Carga com LEFT JOIN de 3 tabelas: {len(df)} registros carregados.")
         return df
     except SQLAlchemyError as e:
-        error_message = f"🚨 Erro SQL ao carregar dados. Verifique o nome das colunas ou da tabela. Detalhes: {e}"
+        error_message = f"🚨 Erro SQL ao carregar dados. Verifique a sintaxe da QUERY e se as tabelas/colunas (participantes, resultados_amos_per, municipio, nu_inscricao, co_municipio_prova, codigo_municipio_dv) existem. Detalhes: {e}"
         logging.error(error_message)
         st.error(error_message)
         return pd.DataFrame()
