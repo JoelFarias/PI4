@@ -42,51 +42,32 @@ escolaridade_map = {
 
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024...")
 def load_data(sample_size=50000):
-    try:
-        connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
-        engine = create_engine(connection_string, pool_pre_ping=True)
-        query = f"""
-            SELECT 
-                p.q001 as escolaridade_pai,
-                p.q002 as escolaridade_mae,
-                p.q005 as faixa_renda,
-                p.tp_sexo as sexo,
-                p.tp_cor_raca as cor_raca,
-                p.idade_calculada as idade,
-                r.sg_uf_prova as uf,
-                r.regiao_nome_prova as regiao,
-                m.nome_municipio,
-                r.nota_cn_ciencias_da_natureza,
-                r.nota_ch_ciencias_humanas,
-                r.nota_lc_linguagens_e_codigos,
-                r.nota_mt_matematica,
-                r.nota_redacao,
-                r.nota_media_5_notas
-            FROM ed_enem_2024_participantes p
-            LEFT JOIN ed_enem_2024_resultados_amos_per r
-                ON p.nu_inscricao = r.nu_sequencial::text 
-            LEFT JOIN municipio m
-                ON r.co_municipio_prova = m.codigo_municipio_dv
-            WHERE p.q001 IS NOT NULL 
-              AND p.q002 IS NOT NULL 
-              AND p.q005 IS NOT NULL
-            ORDER BY RANDOM()
-            LIMIT {sample_size};
-        """
-        df = pd.read_sql(query, engine)
-        engine.dispose()
-        logging.info(f"Carga com LEFT JOIN de 3 tabelas e CAST: {len(df)} registros carregados.")
-        return df
-    except SQLAlchemyError as e:
-        error_message = f"🚨 Erro SQL ao carregar dados. Verifique a sintaxe da QUERY e se as tabelas/colunas existem. Detalhes: {e}"
-        logging.error(error_message)
-        st.error(error_message)
-        return pd.DataFrame()
-    except Exception as e:
-        error_message = f"❌ Erro geral ao carregar dados. Verifique a conexão/credenciais. Detalhes: {e}"
-        logging.error(error_message)
-        st.error(error_message)
-        return pd.DataFrame()
+try:
+connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
+engine = create_engine(connection_string, pool_pre_ping=True)
+query = f"""
+SELECT
+p.nu_inscricao,
+r.nu_sequencial,
+p.q001 AS escolaridade_pai,
+p.q002 AS escolaridade_mae,
+p.q005 AS faixa_renda,
+p.tp_sexo AS sexo,
+p.tp_cor_raca AS cor_raca,
+p.idade_calculada AS idade,
+COALESCE(r.sg_uf_prova, p.sg_uf_prova) AS uf,
+COALESCE(r.regiao_nome_prova, p.regiao_nome_prova) AS regiao,
+m.nome_municipio,
+r.nota_cn_ciencias_da_natureza,
+r.nota_ch_ciencias_humanas,
+r.nota_lc_linguagens_e_codigos,
+r.nota_mt_matematica,
+r.nota_redacao,
+r.nota_media_5_notas
+FROM ed_enem_2024_participantes p
+LEFT JOIN ed_enem_2024_resultados_amos_per r
+ON p.nu_inscricao = r.nu_sequencial::text
+LEFT JOIN municipio m
 
 
 def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
@@ -417,3 +398,4 @@ with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
 st.caption("Dashboard ENEM 2024 - Desenvolvido em Python/Streamlit. Dados: PostgreSQL.")
+
