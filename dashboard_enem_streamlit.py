@@ -26,7 +26,7 @@ Q005_MAP = {
     'A': 'Nenhuma Renda', 'B': 'Até R$ 1.320,00', 'C': 'De R$ 1.320,01 a R$ 1.980,00', 
     'D': 'De R$ 1.980,01 a R$ 2.640,00', 'E': 'De R$ 2.640,01 a R$ 3.300,00', 
     'F': 'De R$ 3.300,01 a R$ 3.960,00', 'G': 'De R$ 3.960,01 a R$ 5.280,00', 
-    'H': 'De R$ 5.280,01 a R$ 6.600,00', 'I': 'De R$ 6.600,01 a R$ 7.920,00', 
+    'H': 'De R$ 5.280,01 a R$ R$ 6.600,00', 'I': 'De R$ 6.600,01 a R$ 7.920,00', 
     'J': 'De R$ 7.920,01 a R$ 9.240,00', 'K': 'De R$ 9.240,01 a R$ 10.560,00', 
     'L': 'De R$ 10.560,01 a R$ 11.880,00', 'M': 'De R$ 11.880,01 a R$ 13.200,00', 
     'N': 'De R$ 13.200,01 a R$ 15.840,00', 'O': 'De R$ 15.840,01 a R$ 19.800,00', 
@@ -46,38 +46,40 @@ def load_data(sample_size=50000):
         connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
         engine = create_engine(connection_string, pool_pre_ping=True)
         
+        # CORREÇÃO: CONSULTA COM INNER JOIN NA TABELA MUNICIPIO
+        # Assume-se que 'codigo_municipio_dv' é a chave de ligação na tabela consolidada.
         query = f"""
             SELECT 
-                p.q001 as escolaridade_pai,
-                p.q002 as escolaridade_mae,
-                p.q005 as faixa_renda,
-                p.tp_sexo as sexo,
-                p.tp_cor_raca as cor_raca,
-                p.idade_calculada as idade,
-                r.sg_uf_prova as uf,
-                r.regiao_nome_prova as regiao,
-                r.nota_cn_ciencias_da_natureza,
-                r.nota_ch_ciencias_humanas,
-                r.nota_lc_linguagens_e_codigos,
-                r.nota_mt_matematica,
-                r.nota_redacao,
-                r.nota_media_5_notas
-            FROM ed_enem_2024_participantes p
-            INNER JOIN ed_enem_2024_resultados r 
-                ON p.nu_sequencial = r.nu_sequencial::integer 
-            WHERE p.q001 IS NOT NULL 
-              AND p.q002 IS NOT NULL 
-              AND p.q005 IS NOT NULL
-              AND r.nota_media_5_notas IS NOT NULL AND r.nota_media_5_notas > 0
+                t1.q001 as escolaridade_pai,
+                t1.q002 as escolaridade_mae,
+                t1.q005 as faixa_renda,
+                t1.tp_sexo as sexo,
+                t1.tp_cor_raca as cor_raca,
+                t1.idade_calculada as idade,
+                t1.sg_uf_prova as uf,
+                t1.regiao_nome_prova as regiao,
+                t2.nome_municipio,
+                t1.nota_cn_ciencias_da_natureza,
+                t1.nota_ch_ciencias_humanas,
+                t1.nota_lc_linguagens_e_codigos,
+                t1.nota_mt_matematica,
+                t1.nota_redacao,
+                t1.nota_media_5_notas
+            FROM ed_enem_2024_resultados_amos_per t1
+            INNER JOIN municipio t2
+                ON t1.codigo_municipio_dv = t2.codigo_municipio_dv
+            WHERE t1.q001 IS NOT NULL 
+              AND t1.q002 IS NOT NULL 
+              AND t1.q005 IS NOT NULL
             ORDER BY RANDOM()
             LIMIT {sample_size};
         """
         df = pd.read_sql(query, engine)
         engine.dispose()
-        logging.info(f"Dados carregados com sucesso: {len(df)} registros.")
+        logging.info(f"Carga com JOIN na tabela municipio: {len(df)} registros carregados.")
         return df
     except SQLAlchemyError as e:
-        error_message = f"🚨 Erro SQL ao carregar dados. Detalhes: {e}"
+        error_message = f"🚨 Erro SQL ao carregar dados. Verifique o nome das colunas (ex: 'codigo_municipio_dv') ou da tabela 'municipio'. Detalhes: {e}"
         logging.error(error_message)
         st.error(error_message)
         return pd.DataFrame()
@@ -165,14 +167,17 @@ def perform_predictive_analysis(df: pd.DataFrame):
     target = 'nota_media_5_notas'
     features = ['faixa_renda', 'escolaridade_pai', 'escolaridade_mae', 'cor_raca', 'sexo']
     
-    df_clean = df.dropna(subset=features + [target]).copy()
+    # 1. Filtragem para garantir dados válidos para o ML
+    df_ml = df.dropna(subset=features + [target]).copy()
+    df_ml = df_ml[df_ml['nota_media_5_notas'] > 0] # Remove notas zeradas/inválidas
 
-    if len(df_clean) < 100:
+    if len(df_ml) < 100:
         return 0, pd.DataFrame(columns=['Variável', 'Importância', 'Tipo'])
 
-    X = df_clean[features]
-    y = df_clean[target]
+    X = df_ml[features]
+    y = df_ml[target]
 
+    # ... Restante da lógica do Random Forest Regressor ...
     preprocessor = ColumnTransformer(
         transformers=[
             ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), features)
@@ -223,11 +228,17 @@ st.markdown("---")
 df_raw = load_data()
 
 if df_raw.empty:
-    st.error("⚠️ O DataFrame está vazio. Verifique a consulta SQL, as credenciais e o INNER JOIN. O problema está na origem dos dados.")
+    st.error("⚠️ O DataFrame está vazio. O problema está na origem dos dados. A consulta com JOIN na tabela 'municipio' falhou. Verifique se a tabela 'municipio' existe e se a coluna 'codigo_municipio_dv' é a chave correta para o JOIN.")
     st.stop()
 
 df = decode_enem_categories(df_raw.copy())
-st.success(f"✅ Dados carregados e processados: {len(df):,} registros na amostra!")
+
+# 2. Filtragem de notas nulas e inválidas no Pandas, onde é mais seguro
+df_filtrado_notas = df.dropna(subset=['nota_media_5_notas']).copy()
+df_filtrado_notas = df_filtrado_notas[df_filtrado_notas['nota_media_5_notas'] > 0]
+df_filtrado_notas = df_filtrado_notas.rename(columns={'nota_media_5_notas': 'nota_media_valida'})
+
+st.success(f"✅ Dados carregados e processados: **{len(df):,}** (Brutos) / **{len(df_filtrado_notas):,}** (Com Nota Válida) registros na amostra!")
 
 st.sidebar.header("Filtros do Dashboard")
 
@@ -256,11 +267,14 @@ if renda_sel_legivel != "Todas":
     if renda_sel_codigo:
         df_filtrado = df_filtrado[df_filtrado["faixa_renda"] == renda_sel_codigo]
 
-st.info(f"Filtros aplicados. Registros para análise: **{len(df_filtrado):,}**")
+df_filtrado = df_filtrado.dropna(subset=['nota_media_5_notas'])
+df_filtrado = df_filtrado[df_filtrado['nota_media_5_notas'] > 0]
+
+st.info(f"Filtros aplicados. Registros para análise (Com Nota Válida): **{len(df_filtrado):,}**")
 st.markdown("---")
 
 if len(df_filtrado) == 0:
-    st.warning("⚠️ Nenhum registro encontrado com os filtros selecionados. Tente expandir sua seleção.")
+    st.warning("⚠️ Nenhum registro encontrado com os filtros selecionados ou após a remoção de notas nulas/zero. Tente expandir sua seleção.")
     st.stop()
 
 st.header("Análise Descritiva Rápida")
@@ -350,7 +364,7 @@ with tab2:
     r2, importance_df = perform_predictive_analysis(df_filtrado)
 
     if r2 == 0:
-        st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo.")
+        st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo. O filtro atual resultou em poucos dados válidos para ML.")
     else:
         col_r2, col_samples = st.columns(2)
         with col_r2:
