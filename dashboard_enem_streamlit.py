@@ -46,8 +46,7 @@ def load_data(sample_size=50000):
         connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
         engine = create_engine(connection_string, pool_pre_ping=True)
         
-        # CORREÇÃO: CONSULTA COM INNER JOIN NA TABELA MUNICIPIO
-        # Assume-se que 'codigo_municipio_dv' é a chave de ligação na tabela consolidada.
+        # CORREÇÃO DEFINITIVA: Utilizando co_municipio_prova como chave de junção na tabela consolidada.
         query = f"""
             SELECT 
                 t1.q001 as escolaridade_pai,
@@ -67,7 +66,7 @@ def load_data(sample_size=50000):
                 t1.nota_media_5_notas
             FROM ed_enem_2024_resultados_amos_per t1
             INNER JOIN municipio t2
-                ON t1.codigo_municipio_dv = t2.codigo_municipio_dv
+                ON t1.co_municipio_prova = t2.codigo_municipio_dv
             WHERE t1.q001 IS NOT NULL 
               AND t1.q002 IS NOT NULL 
               AND t1.q005 IS NOT NULL
@@ -79,7 +78,7 @@ def load_data(sample_size=50000):
         logging.info(f"Carga com JOIN na tabela municipio: {len(df)} registros carregados.")
         return df
     except SQLAlchemyError as e:
-        error_message = f"🚨 Erro SQL ao carregar dados. Verifique o nome das colunas (ex: 'codigo_municipio_dv') ou da tabela 'municipio'. Detalhes: {e}"
+        error_message = f"🚨 Erro SQL ao carregar dados. Verifique o JOIN entre 'co_municipio_prova' (tabela de resultados) e 'codigo_municipio_dv' (tabela municipio). Detalhes: {e}"
         logging.error(error_message)
         st.error(error_message)
         return pd.DataFrame()
@@ -217,7 +216,7 @@ def perform_predictive_analysis(df: pd.DataFrame):
         return var_code
 
     importance_df['Variável'] = importance_df['Variável'].apply(get_legible_name)
-    importance_df['Tipo'] = importance_df['Variável'].apply(lambda x: x.split(':')[0].strip())
+    importance_df['Tipo'] = importance_df['Tipo'].apply(lambda x: x.split(':')[0].strip())
     
     return r2, importance_df.sort_values(by='Importância', ascending=False).reset_index(drop=True)
 
