@@ -46,39 +46,42 @@ def load_data(sample_size=50000):
         connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
         engine = create_engine(connection_string, pool_pre_ping=True)
         
-        # CORREÇÃO DEFINITIVA: Utilizando co_municipio_prova como chave de junção na tabela consolidada.
+        # CORREÇÃO: JOIN de 3 tabelas para obter Socioeconômico (p), Notas (r) e Município (m).
+        # A fonte do Q001/Q002/Q005 é a tabela 'participantes' (p).
         query = f"""
             SELECT 
-                t1.q001 as escolaridade_pai,
-                t1.q002 as escolaridade_mae,
-                t1.q005 as faixa_renda,
-                t1.tp_sexo as sexo,
-                t1.tp_cor_raca as cor_raca,
-                t1.idade_calculada as idade,
-                t1.sg_uf_prova as uf,
-                t1.regiao_nome_prova as regiao,
-                t2.nome_municipio,
-                t1.nota_cn_ciencias_da_natureza,
-                t1.nota_ch_ciencias_humanas,
-                t1.nota_lc_linguagens_e_codigos,
-                t1.nota_mt_matematica,
-                t1.nota_redacao,
-                t1.nota_media_5_notas
-            FROM ed_enem_2024_resultados_amos_per t1
-            INNER JOIN municipio t2
-                ON t1.co_municipio_prova = t2.codigo_municipio_dv
-            WHERE t1.q001 IS NOT NULL 
-              AND t1.q002 IS NOT NULL 
-              AND t1.q005 IS NOT NULL
+                p.q001 as escolaridade_pai,
+                p.q002 as escolaridade_mae,
+                p.q005 as faixa_renda,
+                p.tp_sexo as sexo,
+                p.tp_cor_raca as cor_raca,
+                p.idade_calculada as idade,
+                r.sg_uf_prova as uf,
+                r.regiao_nome_prova as regiao,
+                m.nome_municipio,
+                r.nota_cn_ciencias_da_natureza,
+                r.nota_ch_ciencias_humanas,
+                r.nota_lc_linguagens_e_codigos,
+                r.nota_mt_matematica,
+                r.nota_redacao,
+                r.nota_media_5_notas
+            FROM ed_enem_2024_participantes p
+            INNER JOIN ed_enem_2024_resultados_amos_per r
+                ON p.nu_inscricao = r.nu_inscricao
+            INNER JOIN municipio m
+                ON r.co_municipio_prova = m.codigo_municipio_dv
+            WHERE p.q001 IS NOT NULL 
+              AND p.q002 IS NOT NULL 
+              AND p.q005 IS NOT NULL
             ORDER BY RANDOM()
             LIMIT {sample_size};
         """
         df = pd.read_sql(query, engine)
         engine.dispose()
-        logging.info(f"Carga com JOIN na tabela municipio: {len(df)} registros carregados.")
+        logging.info(f"Carga com JOIN de 3 tabelas: {len(df)} registros carregados.")
         return df
     except SQLAlchemyError as e:
-        error_message = f"🚨 Erro SQL ao carregar dados. Verifique o JOIN entre 'co_municipio_prova' (tabela de resultados) e 'codigo_municipio_dv' (tabela municipio). Detalhes: {e}"
+        error_message = f"🚨 Erro SQL ao carregar dados. Verifique o nome das colunas ou da tabela. Detalhes: {e}"
         logging.error(error_message)
         st.error(error_message)
         return pd.DataFrame()
