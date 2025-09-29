@@ -248,7 +248,8 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_declaration_vs_score_scatter(df):
     """
-    Cria um gráfico de dispersão simples relacionando % de declaração vs nota média.
+    Cria um gráfico de dispersão relacionando % de declaração vs nota média,
+    com cores indicando volume de alunos e linhas de referência.
     """
     # Agrupa por município e calcula métricas
     grp = df.groupby('nome_municipio').agg(
@@ -257,36 +258,84 @@ def create_declaration_vs_score_scatter(df):
         nota_media=('nota_media_5_notas', 'mean')
     ).reset_index()
     
-    # Calcula percentual de declaração
+    # Calcula percentual de declaração e remove outliers extremos
     grp['pct_declarado'] = (grp['declarados'] / grp['total'] * 100).round(1)
     
-    # Cria gráfico de dispersão
+    # Remove outliers extremos usando IQR
+    Q1 = grp['nota_media'].quantile(0.25)
+    Q3 = grp['nota_media'].quantile(0.75)
+    IQR = Q3 - Q1
+    grp = grp[
+        (grp['nota_media'] >= Q1 - 1.5 * IQR) & 
+        (grp['nota_media'] <= Q3 + 1.5 * IQR)
+    ]
+    
+    # Calcula estatísticas para referência
+    media_geral = grp['nota_media'].mean()
+    mediana_geral = grp['nota_media'].median()
+    
+    # Cria gráfico de dispersão com cores por volume
     fig = px.scatter(
         grp,
         x='pct_declarado',
         y='nota_media',
-        hover_data=['nome_municipio', 'total'],
+        size='total',  # Tamanho dos pontos baseado no total de alunos
+        color='total',  # Cor baseada no total de alunos
+        color_continuous_scale='Viridis',
+        hover_data={
+            'nome_municipio': True,
+            'total': True,
+            'nota_media': ':.2f',
+            'pct_declarado': ':.1f'
+        },
         labels={
             'pct_declarado': '% de Rendas Declaradas',
             'nota_media': 'Nota Média',
-            'total': 'Total de Registros'
+            'total': 'Total de Alunos'
         },
         title='Relação entre Declaração de Renda e Desempenho por Município'
     )
     
-    # Tenta adicionar linha de tendência apenas se statsmodels estiver disponível
-    try:
-        import statsmodels.api as sm
-        fig.add_traces(px.scatter(grp, x='pct_declarado', y='nota_media', trendline="ols").data)
-    except ImportError:
-        st.warning("📊 Nota: linha de tendência não disponível (statsmodels não instalado)")
+    # Adiciona linhas de referência
+    fig.add_hline(
+        y=media_geral,
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"Média: {media_geral:.1f}",
+        annotation_position="bottom right"
+    )
+    fig.add_hline(
+        y=mediana_geral,
+        line_dash="dot",
+        line_color="green",
+        annotation_text=f"Mediana: {mediana_geral:.1f}",
+        annotation_position="bottom right"
+    )
     
     # Ajusta layout
     fig.update_layout(
         height=450,
         margin=dict(t=50, b=50),
-        hovermode='closest'
+        hovermode='closest',
+        coloraxis_colorbar_title='Total de Alunos',
+        annotations=[
+            dict(
+                text=(
+                    "Cada ponto representa um município.<br>"
+                    "Tamanho e cor indicam quantidade de alunos.<br>"
+                    "Linhas: média (---) e mediana (....)"
+                ),
+                xref="paper", yref="paper",
+                x=0, y=1.08,
+                showarrow=False,
+                font=dict(size=10)
+            )
+        ]
     )
+    
+    # Ajusta escalas
+    fig.update_traces(marker=dict(sizeref=2.*max(grp['total'])/(40.**2)))
+    fig.update_xaxes(range=[0, 100])
     
     return fig
 
