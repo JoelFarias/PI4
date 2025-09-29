@@ -365,13 +365,9 @@ def create_parent_education_vs_mean_note(df):
             mean_val = pivot_mean.loc[y, x]
             cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
             if np.isnan(mean_val):
-                # Use uma quebra de linha escapada (
-
-                row.append(f"Média: n/a
-Contagem: {cnt}")
+                row.append(f"Média: n/a\\nContagem: {cnt}")
             else:
-                row.append(f"Média: {mean_val:.2f}
-Contagem: {cnt}")
+                row.append(f"Média: {mean_val:.2f}\\nContagem: {cnt}")
         hover_text.append(row)
 
     fig.data[0].hovertemplate = '%{y}<br>%{x}<br>%{customdata}<extra></extra>'
