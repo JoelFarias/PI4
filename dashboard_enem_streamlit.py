@@ -516,12 +516,9 @@ def main():
         st.error("⚠️ Não foi possível carregar dados. Verifique a conexão/configurações do banco.")
         st.stop()
 
-    # Decodifica categorias e preenche notas com médias municipais quando necessário
     df = decode_enem_categories(df_raw)
 
-    # opção no sidebar: mostrar apenas renda declarada para o gráfico de renda
     st.sidebar.header("Filtros do Dashboard")
-    show_only_declared_renda = st.sidebar.checkbox("Mostrar apenas registros com renda declarada (Q005)", value=False)
 
     regioes = ["Todas"] + sorted(df["regiao"].dropna().unique())
     ufs = ["Todas"] + sorted(df["uf"].dropna().unique())
@@ -706,3 +703,4 @@ if __name__ == '__main__':
         st.error("Erro ao executar o aplicativo. Trace abaixo:")
         st.text(traceback.format_exc())
         print(traceback.format_exc())
+
