@@ -378,75 +378,72 @@ def create_notes_box_plot(df):
 
 
 def create_income_vs_math_box_plot(df):
-    stats = df.groupby('faixa_renda_legivel').agg({
-        'nota_mt_matematica': ['mean', 'count', 'std']
-    }).reset_index()
-    
-    stats.columns = ['faixa_renda', 'media', 'quantidade', 'desvio']
-    
-    # Remove 'Desconhecido' e ordena por média
-    stats = stats[stats['faixa_renda'] != 'Desconhecido']
-    stats = stats.sort_values('media', ascending=True)
-    
-    if len(stats) < 2:
-        return px.bar(title='Dados de renda insuficientes para análise')
+    """
+    Cria gráfico relacionando renda e nota de matemática, com visualização alternativa 
+    quando há muitos dados 'Desconhecido'
+    """
+    # Se mais de 70% dos dados são 'Desconhecido', usa visualização alternativa
+    pct_unknown = (df['faixa_renda_legivel'] == 'Desconhecido').mean()
+    if pct_unknown > 0.7:
+        return create_declaration_vs_score_scatter(df)
         
-    # Cria gráfico de bolhas
+    # Remove registros 'Desconhecido' e calcula estatísticas
+    df_known = df[df['faixa_renda_legivel'] != 'Desconhecido'].copy()
+    if len(df_known) < 100:
+        return px.box(title='Dados de renda insuficientes para análise')
+
+    # Cria boxplot com pontos de média sobrepostos
     fig = go.Figure()
     
-    # Adiciona bolhas
-    fig.add_trace(go.Scatter(
-        x=stats['media'],
-        y=np.arange(len(stats)), # Posição vertical igualmente espaçada
-        mode='markers',
-        marker=dict(
-            size=stats['quantidade']/stats['quantidade'].max() * 50, # Tamanho proporcional à quantidade
-            color=stats['desvio'], # Cor baseada no desvio padrão
-            colorscale='Viridis',
-            showscale=True,
-            colorbar=dict(title='Desvio Padrão')
-        ),
-        text=stats['faixa_renda'],
-        hovertemplate="<br>".join([
-            "Faixa: %{text}",
-            "Média: %{x:.1f}",
-            "Quantidade: %{customdata[0]}",
-            "Desvio: %{customdata[1]:.1f}"
-        ]),
-        customdata=np.stack((stats['quantidade'], stats['desvio']), axis=1)
+    # Adiciona boxplots
+    fig.add_trace(go.Box(
+        x=df_known['faixa_renda_legivel'],
+        y=df_known['nota_mt_matematica'],
+        name='Distribuição',
+        boxpoints='outliers',
+        marker_color='lightblue',
+        showlegend=True
     ))
     
-    # Configurações do layout
-    fig.update_layout(
-        title='Média de Matemática por Faixa de Renda',
-        xaxis_title='Nota Média em Matemática',
-        yaxis=dict(
-            showticklabels=False,
-            showgrid=False
-        ),
-        height=max(400, len(stats)*30),
-        showlegend=False,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
+    # Calcula e adiciona médias como pontos destacados
+    means = df_known.groupby('faixa_renda_legivel')['nota_mt_matematica'].mean()
+    counts = df_known.groupby('faixa_renda_legivel')['nota_mt_matematica'].count()
     
-    # Adiciona labels das faixas de renda
-    for i, faixa in enumerate(stats['faixa_renda']):
-        fig.add_annotation(
-            x=0,
-            y=i,
-            text=short_label(faixa, 25),
-            xanchor='right',
-            yanchor='middle',
-            showarrow=False,
-            xshift=-10,
-            align='right'
-        )
+    fig.add_trace(go.Scatter(
+        x=means.index,
+        y=means.values,
+        mode='markers',
+        name='Média',
+        marker=dict(
+            color='red',
+            size=10,
+            symbol='diamond'
+        ),
+        customdata=np.stack((counts, means), axis=1),
+        hovertemplate="Faixa: %{x}<br>Média: %{y:.1f}<br>N: %{customdata[0]}<extra></extra>"
+    ))
+
+    # Layout
+    fig.update_layout(
+        title='Distribuição das Notas de Matemática por Faixa de Renda',
+        xaxis_title='Faixa de Renda',
+        yaxis_title='Nota em Matemática',
+        xaxis_tickangle=-45,
+        height=500,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(l=20, r=20, t=60, b=120)
+    )
     
     return fig
 
-
 def short_label(s: str, maxlen=18) -> str:
-    # reduz rótulos como 'A - Nenhuma/Incompleto' -> 'Nenhuma' e trunca se muito longo
     if pd.isna(s):
         return ''
     if ' - ' in s:
@@ -455,7 +452,6 @@ def short_label(s: str, maxlen=18) -> str:
         s2 = s
     s2 = s2.strip()
     return (s2 if len(s2) <= maxlen else s2[:maxlen-1] + '…')
-
 
 def create_parent_education_vs_mean_note(df):
     pivot_mean = df.groupby(['escolaridade_pai', 'escolaridade_mae'])['nota_media_5_notas'].mean().unstack(fill_value=np.nan)
@@ -565,7 +561,6 @@ def perform_predictive_analysis(df: pd.DataFrame):
     importance_df = importance_df[['Variável', 'Importância', 'Tipo']]
     importance_df = importance_df.sort_values(by='Importância', ascending=False).reset_index(drop=True)
     return r2, importance_df
-
 
 # -------------------- Interface Streamlit (ajustes pedidos) --------------------
 
