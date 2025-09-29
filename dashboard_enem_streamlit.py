@@ -11,7 +11,7 @@ from sklearn.metrics import r2_score
 import numpy as np
 
 # -------------------- Configurações --------------------
-st.set_page_config(page_title="ENEM 2024 - Dashboard (Agregado Municipal)", layout="wide")
+st.set_page_config(page_title="ENEM 2024 - Dashboard", layout="wide")
 
 DB_CONFIG = {
     'host': 'bigdata.dataiesb.com',
@@ -615,3 +615,4 @@ with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
 st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
+
