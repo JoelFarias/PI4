@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import SQLAlchemyError
 import plotly.express as px
-import plotly.graph_objects as go
-import logging
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import OneHotEncoder
@@ -12,7 +10,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.metrics import r2_score
 import numpy as np
 
-logging.basicConfig(level=logging.INFO)
+# -------------------- Configurações --------------------
+st.set_page_config(page_title="ENEM 2024 - Dashboard (Agregado Municipal)", layout="wide")
 
 DB_CONFIG = {
     'host': 'bigdata.dataiesb.com',
@@ -40,24 +39,14 @@ escolaridade_map = {
     'G': 'G - Pós-Graduação', 'H': 'H - Não Sabe'
 }
 
-@st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024...")
-def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
-    """Carrega uma amostra do banco com checagens e fallback robusto.
-
-    Problema corrigido: substituí verificações com `conn.execute(..., (param,))` por
-    `sqlalchemy.inspect` (inspector.has_table) para evitar erros de binding e mensagens
-    como "List argument must consist only of dictionaries" que surgiam em alguns drivers.
-    """
+# -------------------- Função de carregamento (uso: agregação municipal) --------------------
+@st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024 (agregado municipal)...")
+def load_data(sample_size=50000, randomize=False, quick_check_rows=2000):
     connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     engine = None
     try:
         engine = create_engine(connection_string, pool_pre_ping=True)
-        inspector = None
-        try:
-            from sqlalchemy import inspect
-            inspector = inspect(engine)
-        except Exception:
-            inspector = None
+        inspector = inspect(engine)
 
         needed_tables = [
             'ed_enem_2024_participantes',
@@ -65,43 +54,51 @@ def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
             'municipio'
         ]
 
-        missing = []
-        if inspector is not None:
-            missing = [t for t in needed_tables if not inspector.has_table(t)]
-        else:
-            # Fallback conservador: assume tables exist (we'll detect later when reading)
-            missing = []
-
+        missing = [t for t in needed_tables if not inspector.has_table(t)]
         if missing:
             st.error(f"Tabelas faltando no banco: {missing}. Verifique nomes/permissões.")
-            logging.error(f"Tabelas faltando: {missing}")
             return pd.DataFrame()
 
         order_clause = "ORDER BY RANDOM()" if randomize else ""
+
+        # Consulta: traz participantes e as médias agregadas de resultados por município
         query = f"""
             SELECT
                 p.nu_inscricao,
-                r.nu_sequencial,
                 p.q001                       AS escolaridade_pai,
                 p.q002                       AS escolaridade_mae,
                 p.q005                       AS faixa_renda,
                 p.tp_sexo                    AS sexo,
                 p.tp_cor_raca                AS cor_raca,
                 p.idade_calculada            AS idade,
-                COALESCE(r.sg_uf_prova, p.sg_uf_prova) AS uf,
-                COALESCE(r.regiao_nome_prova, p.regiao_nome_prova) AS regiao,
+                p.co_municipio_prova,
+                p.sg_uf_prova                AS uf,
+                p.regiao_nome_prova          AS regiao,
                 m.nome_municipio,
-                r.nota_cn_ciencias_da_natureza,
-                r.nota_ch_ciencias_humanas,
-                r.nota_lc_linguagens_e_codigos,
-                r.nota_mt_matematica,
-                r.nota_redacao,
-                r.nota_media_5_notas
+                r_agg.nota_cn_media_mun,
+                r_agg.nota_ch_media_mun,
+                r_agg.nota_lc_media_mun,
+                r_agg.nota_mt_media_mun,
+                r_agg.nota_redacao_media_mun,
+                r_agg.nota_media_5_notas_media_mun,
+                r_agg.resultados_count_mun
             FROM ed_enem_2024_participantes p
-            LEFT JOIN ed_enem_2024_resultados_amos_per r
-                ON p.nu_inscricao = r.nu_sequencial::text
+            LEFT JOIN (
+                SELECT
+                    co_municipio_prova,
+                    AVG(nota_cn_ciencias_da_natureza)                AS nota_cn_media_mun,
+                    AVG(nota_ch_ciencias_humanas)                    AS nota_ch_media_mun,
+                    AVG(nota_lc_linguagens_e_codigos)                AS nota_lc_media_mun,
+                    AVG(nota_mt_matematica)                          AS nota_mt_media_mun,
+                    AVG(nota_redacao)                                AS nota_redacao_media_mun,
+                    AVG(nota_media_5_notas)                          AS nota_media_5_notas_media_mun,
+                    COUNT(*)                                         AS resultados_count_mun
+                FROM ed_enem_2024_resultados_amos_per
+                GROUP BY co_municipio_prova
+            ) r_agg
+              ON r_agg.co_municipio_prova = p.co_municipio_prova
             LEFT JOIN municipio m
-                ON COALESCE(r.co_municipio_prova, p.co_municipio_prova) = m.codigo_municipio_dv
+              ON p.co_municipio_prova = m.codigo_municipio_dv
             WHERE p.q001 IS NOT NULL
               AND p.q002 IS NOT NULL
               AND p.q005 IS NOT NULL
@@ -111,66 +108,51 @@ def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
 
         df = pd.read_sql(query, engine)
         if df is not None and len(df) > 0:
-            logging.info(f"Query principal executada com sucesso: {len(df)} registros carregados.")
             return df
+
+        # caso a query principal retorne vazia, tenta fallback por amostras
+        p_sample = pd.read_sql(f"SELECT nu_inscricao, q001, q002, q005, tp_sexo, tp_cor_raca, idade_calculada, co_municipio_prova, sg_uf_prova, regiao_nome_prova FROM ed_enem_2024_participantes LIMIT {quick_check_rows};", engine)
+        r_sample = pd.read_sql(f"SELECT co_municipio_prova, nota_cn_ciencias_da_natureza, nota_ch_ciencias_humanas, nota_lc_linguagens_e_codigos, nota_mt_matematica, nota_redacao, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT {quick_check_rows};", engine)
+
+        if p_sample.empty and r_sample.empty:
+            return pd.DataFrame()
+
+        if not r_sample.empty:
+            # agrega resultados por município
+            r_sample['co_municipio_prova'] = r_sample['co_municipio_prova'].astype(str).str.strip()
+            r_agg = r_sample.groupby('co_municipio_prova').agg({
+                'nota_cn_ciencias_da_natureza': 'mean',
+                'nota_ch_ciencias_humanas': 'mean',
+                'nota_lc_linguagens_e_codigos': 'mean',
+                'nota_mt_matematica': 'mean',
+                'nota_redacao': 'mean',
+                'nota_media_5_notas': 'mean'
+            }).reset_index().rename(columns={
+                'nota_cn_ciencias_da_natureza': 'nota_cn_media_mun',
+                'nota_ch_ciencias_humanas': 'nota_ch_media_mun',
+                'nota_lc_linguagens_e_codigos': 'nota_lc_media_mun',
+                'nota_mt_matematica': 'nota_mt_media_mun',
+                'nota_redacao': 'nota_redacao_media_mun',
+                'nota_media_5_notas': 'nota_media_5_notas_media_mun'
+            })
         else:
-            logging.warning("Query principal retornou 0 linhas — tentando fallback inteligente.")
+            r_agg = pd.DataFrame()
 
-    except SQLAlchemyError as e:
-        logging.error("Erro SQL na query principal: %s", e)
-        st.error("Erro SQL ao carregar dados (veja o log para detalhes). Tentando fallback rápido...")
-
-    # Fallback robusto: carregar amostras e mesclar com heurísticas
-    try:
-        if engine is None:
-            engine = create_engine(connection_string, pool_pre_ping=True)
-        from sqlalchemy import inspect
-        inspector = inspect(engine)
-
-        p_sample = pd.DataFrame()
-        r_sample = pd.DataFrame()
-
-        if inspector.has_table('ed_enem_2024_participantes'):
-            p_query = f"SELECT nu_inscricao, q001, q002, q005, tp_sexo, tp_cor_raca, idade_calculada, co_municipio_prova, sg_uf_prova, regiao_nome_prova FROM ed_enem_2024_participantes LIMIT {quick_check_rows};"
-            p_sample = pd.read_sql(p_query, engine)
-
-        if inspector.has_table('ed_enem_2024_resultados_amos_per'):
-            r_query = f"SELECT nu_sequencial, co_municipio_prova, sg_uf_prova, regiao_nome_prova, nota_cn_ciencias_da_natureza, nota_ch_ciencias_humanas, nota_lc_linguagens_e_codigos, nota_mt_matematica, nota_redacao, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT {quick_check_rows};"
-            r_sample = pd.read_sql(r_query, engine)
-
-        merged = pd.DataFrame()
-        if not p_sample.empty and not r_sample.empty:
-            r_sample['nu_sequencial'] = r_sample['nu_sequencial'].astype(str)
-            merged = p_sample.merge(r_sample, left_on='nu_inscricao', right_on='nu_sequencial', how='left')
-            if 'nota_media_5_notas' in merged.columns and merged['nota_media_5_notas'].notna().sum() > 0:
-                st.warning('Fallback: participantes + resultados carregados e mesclados (merge por inscrição).')
-                logging.info(f"Fallback merge bem-sucedido: {len(merged)} registros, {merged['nota_media_5_notas'].notna().sum()} com nota.")
-                return merged
-
-        if not p_sample.empty and not r_sample.empty:
-            if 'co_municipio_prova' in p_sample.columns and 'co_municipio_prova' in r_sample.columns:
-                merged_by_mun = p_sample.merge(r_sample, on='co_municipio_prova', how='left')
-                if 'nota_media_5_notas' in merged_by_mun.columns and merged_by_mun['nota_media_5_notas'].notna().sum() > 0:
-                    st.warning('Fallback: merge por município realizado (menos preciso).')
-                    logging.info(f"Fallback merge por município: {len(merged_by_mun)} registros, {merged_by_mun['nota_media_5_notas'].notna().sum()} com nota.")
-                    return merged_by_mun
+        if not p_sample.empty and not r_agg.empty:
+            p_sample['co_municipio_prova'] = p_sample['co_municipio_prova'].astype(str).str.strip()
+            merged = p_sample.merge(r_agg, on='co_municipio_prova', how='left')
+            return merged
 
         if not p_sample.empty:
-            st.warning('Fallback: carregados apenas dados da tabela participantes para diagnóstico.')
-            logging.info(f"Fallback participantes apenas: {len(p_sample)} registros carregados.")
             return p_sample
 
         if not r_sample.empty:
-            st.warning('Fallback: carregados apenas dados da tabela resultados para diagnóstico.')
-            logging.info(f"Fallback resultados apenas: {len(r_sample)} registros carregados.")
             return r_sample
 
-        st.error('Fallback falhou: nenhuma tabela disponível ou consulta inesperada.')
         return pd.DataFrame()
 
-    except Exception as e2:
-        logging.exception("Fallback também falhou: %s", e2)
-        st.error(f"Fallback falhou. Detalhes: {e2}")
+    except SQLAlchemyError:
+        st.error("Erro ao consultar o banco de dados.")
         return pd.DataFrame()
 
     finally:
@@ -181,9 +163,10 @@ def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
                 pass
 
 
+# -------------------- Decodificadores e pós-processamento --------------------
 def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # Padroniza nomes de colunas quando a query de fallback trouxe os nomes originais
+    # renomeia colunas de fallback quando necessário
     col_map = {}
     if 'q005' in df.columns and 'faixa_renda' not in df.columns:
         col_map['q005'] = 'faixa_renda'
@@ -204,7 +187,7 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
     if col_map:
         df.rename(columns=col_map, inplace=True)
 
-    # Garante que colunas essenciais existam (preenche com NaN/Desconhecido quando ausentes)
+    # garante colunas essenciais
     essential_cols = ['faixa_renda', 'sexo', 'escolaridade_pai', 'escolaridade_mae']
     for c in essential_cols:
         if c not in df.columns:
@@ -231,7 +214,7 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df['escolaridade_mae'] = 'Desconhecido'
 
-    # Garante que colunas de notas existem para evitar KeyError nas funções de plot
+    # garante colunas individuais de nota existam
     notes_cols = [
         'nota_cn_ciencias_da_natureza', 'nota_ch_ciencias_humanas',
         'nota_lc_linguagens_e_codigos', 'nota_mt_matematica', 'nota_redacao',
@@ -241,8 +224,20 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
         if nc not in df.columns:
             df[nc] = np.nan
 
+    # Se existirem colunas municipais agregadas, preenche NA das notas individuais
+    nota_cols_ind = notes_cols
+    nota_cols_mun = [
+        'nota_cn_media_mun', 'nota_ch_media_mun', 'nota_lc_media_mun',
+        'nota_mt_media_mun', 'nota_redacao_media_mun', 'nota_media_5_notas_media_mun'
+    ]
+    for ind, mun in zip(nota_cols_ind, nota_cols_mun):
+        if mun in df.columns:
+            df[ind] = df[ind].fillna(df[mun])
+
     return df
 
+
+# -------------------- Visualizações e funções analíticas --------------------
 
 def create_pie_chart(df, column, title):
     counts = df[column].value_counts().reset_index()
@@ -375,52 +370,27 @@ def perform_predictive_analysis(df: pd.DataFrame):
     importance_df = importance_df.sort_values(by='Importância', ascending=False).reset_index(drop=True)
     return r2, importance_df
 
-st.set_page_config(page_title="ENEM 2024 - Dashboard Socioeconômico", layout="wide")
-st.title("📊 ENEM 2024 - Dashboard Socioeconômico")
+
+# -------------------- Interface Streamlit --------------------
+st.title("📊 ENEM 2024 - Dashboard Socioeconômico (Agregado Municipal)")
 st.markdown("---")
 
+# Carrega os dados
 df_raw = load_data()
-with st.expander("🧪 Diagnóstico rápido - por que zero notas?"):
-    st.write("Preview df_raw")
-    st.dataframe(df_raw.head(6))
-
-    st.write("Colunas carregadas e contagens not-null")
-    cols_info = pd.DataFrame({
-        "col": df_raw.columns,
-        "notnull": [int(df_raw[c].notna().sum()) for c in df_raw.columns]
-    })
-    st.dataframe(cols_info.sort_values("notnull", ascending=False).head(40))
-
-    notes = ['nota_cn_ciencias_da_natureza','nota_ch_ciencias_humanas',
-             'nota_lc_linguagens_e_codigos','nota_mt_matematica',
-             'nota_redacao','nota_media_5_notas']
-    st.write("Contagem NÃO-NULAS nas colunas de nota (amostra carregada):")
-    st.table({c: int(df_raw[c].notna().sum()) if c in df_raw.columns else 0 for c in notes})
-
-    st.write("Tentativa direta: carregar pequenas amostras da tabela de resultados (para checar existência de notas)")
-    try:
-        from sqlalchemy import create_engine
-        engine_test = create_engine(f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}", pool_pre_ping=True)
-        r_sample = pd.read_sql("SELECT nu_sequencial, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT 500;", engine_test)
-        st.write("Resultados (sample 500) - not-null counts:")
-        st.table(r_sample.notna().sum().to_frame("not_null_count"))
-        st.dataframe(r_sample.head(10))
-        engine_test.dispose()
-    except Exception as e:
-        st.error(f"Erro ao tentar consultar tabela resultados: {e}")
 if df_raw.empty:
-    st.error("⚠️ O DataFrame está vazio. Verifique a origem dos dados e a consulta SQL.")
+    st.error("⚠️ Não foi possível carregar dados. Verifique a conexão/configurações do banco.")
     st.stop()
 
+# Decodifica categorias e preenche notas com médias municipais quando necessário
 df = decode_enem_categories(df_raw)
 
+# Filtra registros com nota média válida (preenchida com média municipal quando indivíduo não tem)
 df_filtrado_notas = df.dropna(subset=['nota_media_5_notas']).copy()
 df_filtrado_notas = df_filtrado_notas[df_filtrado_notas['nota_media_5_notas'] > 0]
 
-st.success(f"✅ Dados carregados e processados: **{len(df):,}** (Brutos) / **{len(df_filtrado_notas):,}** (Com Nota Válida) registros na amostra!")
+st.success(f"✅ Dados prontos: **{len(df):,}** registros carregados — **{len(df_filtrado_notas):,}** com nota válida (individual ou média municipal)")
 
 st.sidebar.header("Filtros do Dashboard")
-
 regioes = ["Todas"] + sorted(df["regiao"].dropna().unique())
 ufs = ["Todas"] + sorted(df["uf"].dropna().unique())
 generos = ["Todos"] + sorted(df["sexo"].dropna().unique())
@@ -433,8 +403,8 @@ uf_sel = st.sidebar.selectbox("UF", ufs)
 genero_sel = st.sidebar.selectbox("Sexo", generos)
 renda_sel_legivel = st.sidebar.selectbox("Faixa de Renda", ["Todas"] + rendas_legiveis)
 
+# Aplica filtros
 df_filtrado = df.copy()
-
 if regiao_sel != "Todas":
     df_filtrado = df_filtrado[df_filtrado["regiao"] == regiao_sel]
 if uf_sel != "Todas":
@@ -446,36 +416,38 @@ if renda_sel_legivel != "Todas":
     if renda_sel_codigo:
         df_filtrado = df_filtrado[df_filtrado["faixa_renda"] == renda_sel_codigo]
 
+# Mantém apenas registros com nota válida
 df_filtrado = df_filtrado.dropna(subset=['nota_media_5_notas'])
 df_filtrado = df_filtrado[df_filtrado['nota_media_5_notas'] > 0]
 
-st.info(f"Filtros aplicados. Registros para análise (Com Nota Válida): **{len(df_filtrado):,}**")
+st.info(f"Registros para análise (Com Nota Válida): **{len(df_filtrado):,}**")
 st.markdown("---")
 
 if len(df_filtrado) == 0:
-    st.warning("⚠️ Nenhum registro encontrado com os filtros selecionados ou após a remoção de notas nulas/zero. Tente expandir sua seleção.")
+    st.warning("⚠️ Nenhum registro encontrado com os filtros selecionados. Tente expandir sua seleção.")
     st.stop()
 
+# Métricas rápidas
 st.header("Análise Descritiva Rápida")
 col_met1, col_met2, col_met3, col_met4 = st.columns(4)
 
-if len(df_filtrado) > 0:
-    media_geral = df_filtrado['nota_media_5_notas'].mean()
-    media_matematica = df_filtrado['nota_mt_matematica'].mean()
-    media_redacao = df_filtrado['nota_redacao'].mean()
-    total_participantes = len(df_filtrado)
+media_geral = df_filtrado['nota_media_5_notas'].mean()
+media_matematica = df_filtrado['nota_mt_matematica'].mean()
+media_redacao = df_filtrado['nota_redacao'].mean()
+total_participantes = len(df_filtrado)
 
-    with col_met1:
-        st.metric(label="Total de Participantes (Filtro)", value=f"{total_participantes:,}")
-    with col_met2:
-        st.metric(label="Média Geral (5 Notas)", value=f"{media_geral:.2f} pts")
-    with col_met3:
-        st.metric(label="Média Matemática", value=f"{media_matematica:.2f} pts")
-    with col_met4:
-        st.metric(label="Média Redação", value=f"{media_redacao:.2f} pts")
+with col_met1:
+    st.metric(label="Total de Participantes (Filtro)", value=f"{total_participantes:,}")
+with col_met2:
+    st.metric(label="Média Geral (5 Notas)", value=f"{media_geral:.2f} pts")
+with col_met3:
+    st.metric(label="Média Matemática", value=f"{media_matematica:.2f} pts")
+with col_met4:
+    st.metric(label="Média Redação", value=f"{media_redacao:.2f} pts")
 
 st.markdown("---")
 
+# Abas
 tab1, tab2 = st.tabs(["Análise Exploratória", "Análise Preditiva e Relatório"])
 
 with tab1:
@@ -550,30 +522,18 @@ with tab1:
 
 with tab2:
     st.subheader("🔬 Análise Preditiva: Impacto Socioeconômico na Nota Média")
-    st.markdown("""
-        O modelo Random Forest Regressor foi treinado para prever a Nota Média (Target) usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
-    """)
+    st.markdown("O modelo Random Forest Regressor foi treinado para prever a Nota Média usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.\n\nATENÇÃO: quando a nota individual do participante não existir, utilizamos a média municipal como proxy/contexto (é uma aproximação).")
     r2, importance_df = perform_predictive_analysis(df_filtrado)
     if r2 == 0:
-        st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo. O filtro atual resultou em poucos dados válidos para ML.")
+        st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo com os filtros atuais.")
     else:
         col_r2, col_samples = st.columns(2)
         with col_r2:
-            st.metric(
-                label="Coeficiente de Determinação ($R^2$)", 
-                value=f"{r2:.4f}",
-                help="Proporção da variância total das notas explicada pelas variáveis socioeconômicas no modelo. Valores mais próximos de 1 são melhores."
-            )
+            st.metric(label="Coeficiente de Determinação ($R^2$)", value=f"{r2:.4f}")
         with col_samples:
-            st.metric(
-                label="Amostra para Predição", 
-                value=f"{len(df_filtrado):,}",
-                help="O modelo foi treinado com o subset de dados filtrado."
-            )
-        st.markdown("### Relatório Analítico: Importância das Variáveis")
-        st.markdown("""
-            Interpretação: A Importância (soma total = 1.0) mede o quanto uma variável contribuiu para a precisão do modelo Random Forest. Valores mais altos indicam maior influência no desempenho do aluno.
-        """)
+            st.metric(label="Amostra para Predição", value=f"{len(df_filtrado):,}")
+
+        st.markdown("### Importância das Variáveis")
         fig_importance = px.bar(
             importance_df.head(20),
             x='Importância',
@@ -589,5 +549,4 @@ st.markdown("---")
 with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
-st.caption("Dashboard ENEM 2024 - Desenvolvido em Python/Streamlit. Dados: PostgreSQL.")
-
+st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
