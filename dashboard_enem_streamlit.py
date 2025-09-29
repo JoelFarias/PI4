@@ -248,69 +248,8 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 # -------------------- Novas visualizações para casos com muitos 'Desconhecido' --------------------
 
 def create_declaration_vs_score_scatter(df):
-    """
-    Substituído: retorna um gráfico de distribuição de idades dos participantes.
-    """
-    # Prepara os dados
-    df['tem_declaracao'] = df['faixa_renda_legivel'] != 'Desconhecido'
-    
-    # Calcula estatísticas por grupo
-    stats = df.groupby('tem_declaracao').agg({
-        'nota_media_5_notas': ['count', 'mean', 'std'],
-        'nome_municipio': 'nunique'
-    }).round(2)
-    
-    stats.columns = ['Total Alunos', 'Média', 'Desvio Padrão', 'Municípios']
-    # Mapeia o índice booleano para nomes legíveis
-    idx_map = {False: 'Não Declarada', True: 'Declarada'}
-    stats.index = [idx_map.get(val, str(val)) for val in stats.index]
-    
-    # Cria figura com subplots
-    fig = go.Figure()
-    
-    # Adiciona barras para média
-    fig.add_trace(go.Bar(
-        name='Média das Notas',
-        x=stats.index,
-        y=stats['Média'],
-        text=stats['Média'].round(1),
-        textposition='auto',
-        width=0.6,
-        marker_color=['#ff9999', '#66b3ff']
-    ))
-    
-    # Adiciona informações de contagem como anotações
-    for i, (idx, row) in enumerate(stats.iterrows()):
-        fig.add_annotation(
-            x=idx,
-            y=row['Média'],
-            text=f"n={row['Total Alunos']:,.0f}<br>{row['Municípios']} municípios",
-            showarrow=False,
-            yshift=10,
-            font=dict(size=10)
-        )
-    
-    # Atualiza layout
-    fig.update_layout(
-        title='Comparação de Desempenho: Renda Declarada vs Não Declarada',
-        yaxis_title='Nota Média',
-        showlegend=False,
-        height=400,
-        margin=dict(t=50, b=50),
-        annotations=[
-            dict(
-                text=(
-                    f"Diferença: {abs(stats.get('Declarada', {}).get('Média', 0) - stats.get('Não Declarada', {}).get('Média', 0)):.1f} pontos"
-                ),
-                xref="paper", yref="paper",
-                x=0.5, y=1.05,
-                showarrow=False,
-                font=dict(size=12)
-            )
-        ]
-    )
-    
-    return fig
+
+    return create_income_bar_chart(df)
 
 
 def create_top_mun_declared_bar(df, top_n=10):
