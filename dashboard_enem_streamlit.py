@@ -249,155 +249,65 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_declaration_vs_score_scatter(df):
     """
-    Cria um gráfico de dispersão melhorado que relaciona declaração de renda e desempenho,
-    com tratamento para dados insuficientes/problemáticos.
+    Cria uma visualização simples comparando desempenho entre grupos com renda
+    declarada vs não declarada.
     """
-    # Verifica se há dados suficientes
-    if len(df) < 10:
-        return px.scatter(title="Dados insuficientes para análise")
-
-    # Agrupa por município e calcula métricas
-    grp = df.groupby('nome_municipio').agg(
-        declarados=('faixa_renda_legivel', lambda x: (x != 'Desconhecido').sum()),
-        total=('faixa_renda_legivel', 'count'),
-        nota_media=('nota_media_5_notas', 'mean'),
-        nota_mediana=('nota_media_5_notas', 'median'),
-        desvio=('nota_media_5_notas', 'std')
-    ).reset_index()
+    # Prepara os dados
+    df['tem_declaracao'] = df['faixa_renda_legivel'] != 'Desconhecido'
     
-    # Calcula métricas derivadas
-    grp['pct_declarado'] = (grp['declarados'] / grp['total'] * 100).round(1)
-    grp['coef_var'] = (grp['desvio'] / grp['nota_media'] * 100).fillna(0)
+    # Calcula estatísticas por grupo
+    stats = df.groupby('tem_declaracao').agg({
+        'nota_media_5_notas': ['count', 'mean', 'std'],
+        'nome_municipio': 'nunique'
+    }).round(2)
     
-    # Remove municípios com poucos alunos ou variação muito baixa
-    MIN_ALUNOS = 10
-    grp = grp[
-        (grp['total'] >= MIN_ALUNOS) & 
-        (grp['coef_var'] > 0)  # remove municípios com notas todas iguais
-    ]
+    stats.columns = ['Total Alunos', 'Média', 'Desvio Padrão', 'Municípios']
+    stats.index = ['Não Declarada', 'Declarada']
     
-    # Verifica se ainda há dados após filtragem
-    if len(grp) < 5:
-        return px.scatter(
-            title="Dados insuficientes após filtragem. Necessário mais municípios com dados válidos."
-        )
+    # Cria figura com subplots
+    fig = go.Figure()
     
-    # Remove outliers usando Z-score para notas
-    z_scores = np.abs((grp['nota_media'] - grp['nota_media'].mean()) / grp['nota_media'].std())
-    grp = grp[z_scores < 3]
+    # Adiciona barras para média
+    fig.add_trace(go.Bar(
+        name='Média das Notas',
+        x=stats.index,
+        y=stats['Média'],
+        text=stats['Média'].round(1),
+        textposition='auto',
+        width=0.6,
+        marker_color=['#ff9999', '#66b3ff']
+    ))
     
-    # Se tiver poucos pontos únicos de declaração, usa visualização alternativa
-    if grp['pct_declarado'].nunique() < 5:
-        try:
-            # Tenta criar faixas de declaração
-            grp['faixa_declaracao'] = pd.cut(
-                grp['pct_declarado'],
-                bins=5,
-                labels=['0-20%', '20-40%', '40-60%', '60-80%', '80-100%']
-            )
-        except ValueError:
-            # Se falhar em criar faixas, usa quartis
-            grp['faixa_declaracao'] = pd.qcut(
-                grp['pct_declarado'],
-                q=min(4, len(grp.pct_declarado.unique())),
-                duplicates='drop'
-            )
-        
-        fig = px.box(
-            grp,
-            x='faixa_declaracao',
-            y='nota_media',
-            points='all',
-            title='Distribuição de Notas por Faixa de Declaração de Renda',
-            labels={
-                'faixa_declaracao': 'Faixa de Declaração de Renda',
-                'nota_media': 'Nota Média do Município'
-            }
-        )
-        
-        fig.update_layout(
-            height=450,
-            showlegend=False,
-            annotations=[dict(
-                text="* Cada ponto representa um município",
-                xref="paper", yref="paper",
-                x=0, y=1.05,
-                showarrow=False,
-                font=dict(size=10)
-            )]
-        )
-        
-        return fig
-    
-    # Cria gráfico de dispersão com cores por volume
-    fig = px.scatter(
-        grp,
-        x='pct_declarado',
-        y='nota_media',
-        size='total',
-        color='coef_var',
-        color_continuous_scale='RdYlBu_r',
-        hover_data={
-            'nome_municipio': True,
-            'total': True,
-            'nota_media': ':.2f',
-            'coef_var': ':.1f',
-            'pct_declarado': ':.1f'
-        },
-        labels={
-            'pct_declarado': '% de Rendas Declaradas',
-            'nota_media': 'Nota Média',
-            'total': 'Quantidade de Alunos',
-            'coef_var': 'Coeficiente de Variação (%)'
-        },
-        title='Relação entre Declaração de Renda e Desempenho por Município'
-    )
-    
-    # Tenta adicionar linha de tendência apenas se houver dados suficientes
-    if len(grp) >= 3:
-        try:
-            X = grp['pct_declarado'].values.reshape(-1, 1)
-            y = grp['nota_media'].values
-            reg = LinearRegression().fit(X, y)
-            grp['pred'] = reg.predict(X)
-            
-            fig.add_traces(go.Scatter(
-                x=grp['pct_declarado'],
-                y=grp['pred'],
-                mode='lines',
-                line=dict(color='red', dash='dash'),
-                name='Tendência',
-                showlegend=True
-            ))
-        except Exception as e:
-            st.warning(f"Não foi possível calcular linha de tendência: {str(e)}")
-    
-    # Ajusta layout
-    fig.update_layout(
-        height=450,
-        hovermode='closest',
-        coloraxis_colorbar_title='Variação (%)',
-        annotations=[dict(
-            text=(
-                "Cada ponto representa um município.<br>"
-                "Tamanho: quantidade de alunos<br>"
-                "Cor: variação das notas<br>"
-                "Linha tracejada: tendência (quando disponível)"
-            ),
-            xref="paper", yref="paper",
-            x=0, y=1.08,
+    # Adiciona informações de contagem como anotações
+    for i, (idx, row) in enumerate(stats.iterrows()):
+        fig.add_annotation(
+            x=idx,
+            y=row['Média'],
+            text=f"n={row['Total Alunos']:,.0f}<br>{row['Municípios']} municípios",
             showarrow=False,
+            yshift=10,
             font=dict(size=10)
-        )]
-    )
-    
-    # Ajusta escalas e referências
-    if len(grp) > 0:  # apenas se houver dados
-        fig.update_traces(
-            marker=dict(sizeref=2.*max(grp['total'])/(40.**2)),
-            selector=dict(mode='markers')
         )
-    fig.update_xaxes(range=[0, 100])
+    
+    # Atualiza layout
+    fig.update_layout(
+        title='Comparação de Desempenho: Renda Declarada vs Não Declarada',
+        yaxis_title='Nota Média',
+        showlegend=False,
+        height=400,
+        margin=dict(t=50, b=50),
+        annotations=[
+            dict(
+                text=(
+                    f"Diferença: {abs(stats.loc['Declarada', 'Média'] - stats.loc['Não Declarada', 'Média']):.1f} pontos"
+                ),
+                xref="paper", yref="paper",
+                x=0.5, y=1.05,
+                showarrow=False,
+                font=dict(size=12)
+            )
+        ]
+    )
     
     return fig
 
