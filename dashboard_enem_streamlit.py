@@ -309,6 +309,12 @@ def create_pie_chart(df, column, title, textfont_size=10):
     fig.update_layout(legend=dict(orientation='v', x=1.02, y=0.5, font=dict(size=10)), margin=dict(t=30, b=30), legend_title_text=column)
     return fig
 
+def create_mean_note_box_plot(df):
+    if df['nota_media_5_notas'].dropna().empty:
+        return px.box(title='Nenhum dado de nota média disponível')
+    fig = px.box(df, y='nota_media_5_notas', title='Distribuição da Nota Média (5 áreas)', points='outliers')
+    fig.update_layout(margin=dict(t=40))
+    return fig
 
 def create_income_bar_chart(df, only_declared=False):
     renda = df['faixa_renda_legivel'].fillna('Desconhecido')
@@ -581,7 +587,7 @@ def main():
             fig6 = create_pie_chart(df_filtrado, "sexo", "Distribuição por Sexo", textfont_size=12)
             st.plotly_chart(fig6, use_container_width=True, key="sexo_pie_chart")
         with col_mean:
-            fig_mean_box = create_notes_box_plot(df_filtrado)
+            fig_mean_box = create_mean_note_box_plot(df_filtrado)
             st.plotly_chart(fig_mean_box, use_container_width=True, key="mean_note_boxplot")
 
         with st.expander("🔍 Detalhamento das Estatísticas"):
