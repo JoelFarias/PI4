@@ -249,9 +249,22 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_declaration_vs_score_scatter(df):
 
+    # Se não houver dados suficientes para distribuição de renda, mostra distribuição de idades
     fig = create_income_bar_chart(df)
-    if fig is None:
-        fig = px.bar(title="Sem dados suficientes para distribuição de renda")
+    if fig is None or (hasattr(fig, "data") and len(fig.data) == 0):
+        fig = px.histogram(
+            df,
+            x="idade",
+            nbins=30,
+            title="Distribuição de Idades dos Participantes",
+            labels={"idade": "Idade"}
+        )
+        fig.update_layout(
+            yaxis_title="Quantidade",
+            xaxis_title="Idade",
+            height=400,
+            margin=dict(t=50, b=50)
+        )
     return fig
 
 
