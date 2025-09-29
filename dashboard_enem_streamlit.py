@@ -41,7 +41,7 @@ escolaridade_map = {
 
 # -------------------- Função de carregamento (uso: agregação municipal) --------------------
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024 (agregado municipal)...")
-def load_data(sample_size=100000, randomize=False, quick_check_rows=2000):
+def load_data(sample_size=50000, randomize=False, quick_check_rows=2000):
     connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     engine = None
     try:
@@ -61,6 +61,7 @@ def load_data(sample_size=100000, randomize=False, quick_check_rows=2000):
 
         order_clause = "ORDER BY RANDOM()" if randomize else ""
 
+        # Consulta: traz participantes e as médias agregadas de resultados por município
         query = f"""
             SELECT
                 p.nu_inscricao,
@@ -236,74 +237,123 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# -------------------- Visualizações e funções analíticas --------------------
+# -------------------- Visualizações e funções analíticas (MELHORADAS) --------------------
 
 def create_pie_chart(df, column, title):
     counts = df[column].value_counts().reset_index()
     counts.columns = [column, "count"]
-    fig = px.pie(counts, names=column, values="count", title=title, hole=0.4)
+    # Exibe porcentagem para facilitar leitura
+    counts['pct'] = counts['count'] / counts['count'].sum() * 100
+    if column == 'sexo':
+        fig = px.pie(counts, names=column, values="count", title=title, hole=0.35,
+                     color_discrete_sequence=px.colors.qualitative.Safe)
+    else:
+        fig = px.pie(counts, names=column, values="count", title=title, hole=0.35)
+    fig.update_traces(textinfo='label+percent', hovertemplate='%{label}: %{value} (%{percent})')
     fig.update_layout(legend_title_text=column, margin=dict(t=30, b=0, l=0, r=0))
     return fig
 
 
 def create_income_bar_chart(df):
-    renda_counts = df["faixa_renda_legivel"].value_counts().reset_index()
-    renda_counts.columns = ["faixa_renda_legivel", "count"]
-    ordered_categories = [Q005_MAP[k] for k in Q005_MAP.keys() if Q005_MAP[k] in renda_counts["faixa_renda_legivel"].tolist()]
+    # Usa a coluna legível para o usuário e mostra porcentagens; ordena pela ordem natural do Q005
+    renda = df['faixa_renda_legivel'].fillna('Desconhecido')
+    renda_counts = renda.value_counts().reset_index()
+    renda_counts.columns = ['faixa_renda_legivel', 'count']
+    renda_counts['pct'] = renda_counts['count'] / renda_counts['count'].sum() * 100
+    ordered_categories = [Q005_MAP[k] for k in Q005_MAP.keys() if Q005_MAP[k] in renda_counts['faixa_renda_legivel'].tolist()]
+    # se só existir 'Desconhecido', mostra informativo e plota histograma simples
+    if len(ordered_categories) <= 1:
+        fig = px.bar(renda_counts, x='faixa_renda_legivel', y='count', title='Distribuição de Renda (Q005) — pouco detalhe disponível', labels={'faixa_renda_legivel': 'Faixa de Renda', 'count': 'Quantidade'})
+        fig.update_traces(texttemplate='%{y}', textposition='auto')
+        return fig
+
     fig = px.bar(
-        renda_counts,
-        x="faixa_renda_legivel", y="count",
-        title="Distribuição de Renda (Q005)",
-        labels={"faixa_renda_legivel": "Faixa de Renda", "count": "Quantidade"},
-        category_orders={"faixa_renda_legivel": ordered_categories}
+        renda_counts.sort_values('count', ascending=False),
+        x='faixa_renda_legivel', y='count',
+        title='Distribuição de Renda (Q005) — Faixas legíveis',
+        labels={'faixa_renda_legivel': 'Faixa de Renda (Q005)', 'count': 'Quantidade'},
+        category_orders={'faixa_renda_legivel': ordered_categories}
     )
+    fig.update_traces(texttemplate='%{y} (%{customdata[0]:.1f}%)', textposition='outside', customdata=renda_counts[['pct']].values)
     fig.update_xaxes(tickangle=45)
+    fig.update_layout(margin=dict(t=50, b=120))
     return fig
 
 
 def create_notes_box_plot(df):
     notes_columns = [
-        "nota_cn_ciencias_da_natureza", "nota_ch_ciencias_humanas",
-        "nota_lc_linguagens_e_codigos", "nota_mt_matematica", "nota_redacao"
+        'nota_cn_ciencias_da_natureza', 'nota_ch_ciencias_humanas',
+        'nota_lc_linguagens_e_codigos', 'nota_mt_matematica', 'nota_redacao'
     ]
-    df_melt = df[notes_columns].melt(var_name="Área", value_name="Nota")
-    fig = px.box(
-        df_melt,
-        y="Nota", color="Área",
-        title="Distribuição das Notas por Área de Conhecimento"
-    )
+    df_melt = df[notes_columns].melt(var_name='Área', value_name='Nota')
+    fig = px.box(df_melt, y='Nota', color='Área', title='Distribuição das Notas por Área de Conhecimento', points='outliers')
+    fig.update_layout(boxmode='group')
     return fig
 
 
 def create_income_vs_math_box_plot(df):
-    ordered_categories = [Q005_MAP[k] for k in Q005_MAP.keys() if Q005_MAP[k] in df["faixa_renda_legivel"].tolist()]
+    # Exclui 'Desconhecido' para que cada faixa represente efetivamente grupos de renda
+    df_plot = df.copy()
+    if 'faixa_renda_legivel' not in df_plot.columns:
+        df_plot['faixa_renda_legivel'] = 'Desconhecido'
+    df_plot['faixa_renda_legivel'] = df_plot['faixa_renda_legivel'].fillna('Desconhecido')
+    df_no_unknown = df_plot[df_plot['faixa_renda_legivel'] != 'Desconhecido']
+
+    if df_no_unknown['faixa_renda_legivel'].nunique() < 2:
+        # Se não há detalhe de renda, mostra histogram da nota de matemática e um box simples
+        fig = px.box(df_plot, y='nota_mt_matematica', points='all', title='Nota de Matemática (dados de renda indisponíveis ou agregados)')
+        return fig
+
+    ordered_categories = [Q005_MAP[k] for k in Q005_MAP.keys() if Q005_MAP[k] in df_no_unknown['faixa_renda_legivel'].tolist()]
     fig = px.box(
-        df,
-        x="faixa_renda_legivel",
-        y="nota_mt_matematica",
-        title="Impacto da Renda na Nota de Matemática (Box Plot)",
-        labels={"faixa_renda_legivel": "Faixa de Renda", "nota_mt_matematica": "Nota Matemática"},
-        color="faixa_renda_legivel",
-        category_orders={"faixa_renda_legivel": ordered_categories}
+        df_no_unknown,
+        x='faixa_renda_legivel',
+        y='nota_mt_matematica',
+        title='Impacto da Renda na Nota de Matemática (Box Plot)',
+        labels={'faixa_renda_legivel': 'Faixa de Renda', 'nota_mt_matematica': 'Nota Matemática'},
+        points='all',
+        category_orders={'faixa_renda_legivel': ordered_categories}
     )
     fig.update_xaxes(tickangle=45)
     return fig
 
 
 def create_parent_education_vs_mean_note(df):
-    df_agg = df.groupby(['escolaridade_pai', 'escolaridade_mae'])['nota_media_5_notas'].mean().reset_index()
-    df_agg.rename(columns={'nota_media_5_notas': 'Nota Média'}, inplace=True)
-    fig = px.scatter(
-        df_agg,
-        x='escolaridade_pai',
-        y='escolaridade_mae',
-        size='Nota Média',
-        color='Nota Média',
-        title='Média das Notas vs. Escolaridade dos Pais',
-        labels={'escolaridade_pai': 'Escolaridade do Pai', 'escolaridade_mae': 'Escolaridade da Mãe'},
-        color_continuous_scale=px.colors.sequential.Plasma
-    )
-    fig.update_xaxes(tickangle=45)
+    # Em vez de scatter com bolinhas sobrepostas, usamos heatmap (pivot) com média das notas e anotação de contagem
+    pivot_mean = df.groupby(['escolaridade_pai', 'escolaridade_mae'])['nota_media_5_notas'].mean().unstack(fill_value=np.nan)
+    pivot_count = df.groupby(['escolaridade_pai', 'escolaridade_mae'])['nota_media_5_notas'].count().unstack(fill_value=0)
+
+    if pivot_mean.size == 0:
+        return px.imshow([[np.nan]], title='Média das Notas vs. Escolaridade dos Pais (sem dados)')
+
+    # Ordena os níveis presentes para manter consistência visual
+    x_labels = list(pivot_mean.columns)
+    y_labels = list(pivot_mean.index)
+
+    fig = px.imshow(pivot_mean.values,
+                    x=x_labels,
+                    y=y_labels,
+                    labels={'x': 'Escolaridade da Mãe', 'y': 'Escolaridade do Pai', 'color': 'Nota Média'},
+                    text_auto='.2f',
+                    aspect='auto',
+                    title='Média das Notas (5) por Escolaridade dos Pais')
+
+    # adiciona contagem como anotações adicionais no hover
+    hover_text = []
+    for i, y in enumerate(y_labels):
+        row = []
+        for j, x in enumerate(x_labels):
+            mean_val = pivot_mean.loc[y, x]
+            cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
+            if np.isnan(mean_val):
+                row.append(f"Média: n/a\nContagem: {cnt}")
+            else:
+                row.append(f"Média: {mean_val:.2f}\nContagem: {cnt}")
+        hover_text.append(row)
+
+    fig.data[0].hovertemplate = '%{y}<br>%{x}<br>%{customdata}<extra></extra>'
+    fig.data[0].customdata = hover_text
+    fig.update_layout(margin=dict(t=60))
     return fig
 
 
@@ -549,4 +599,3 @@ with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
 st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
-
