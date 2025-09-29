@@ -246,14 +246,21 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 # -------------------- Novas visualizações para casos com muitos 'Desconhecido' --------------------
 
-def create_declared_vs_unknown_pie(df):
-    s = df['faixa_renda_legivel'].fillna('Desconhecido')
-    counts = s.value_counts()
-    declared = counts.drop('Desconhecido', errors='ignore').sum()
-    unknown = counts.get('Desconhecido', 0)
-    df_p = pd.DataFrame({'categoria': ['Declarado', 'Desconhecido'], 'count': [declared, unknown]})
-    fig = px.pie(df_p, names='categoria', values='count', title='Proporção: Renda Declarada vs Desconhecido', hole=0.4)
-    fig.update_traces(textinfo='label+percent')
+def create_declaration_vs_score_scatter(df, min_records=10, top_n=30):
+    # Para municípios com pelo menos min_records, plota taxa de declaração (x) vs nota média (y)
+    grp = df.groupby('nome_municipio').agg(
+        declarados=('faixa_renda_legivel', lambda s: (s != 'Desconhecido').sum()),
+        total=('faixa_renda_legivel', 'count'),
+        nota_media=('nota_media_5_notas', 'mean')
+    ).reset_index()
+    grp['tx_declaracao'] = grp['declarados'] / grp['total']
+    grp = grp[grp['total'] >= min_records]
+    if grp.empty:
+        return px.bar(title='Nenhum município com registros suficientes para análise de declaração de renda')
+    top = grp.sort_values('total', ascending=False).head(top_n)
+    fig = px.scatter(top, x='tx_declaracao', y='nota_media', size='total', hover_name='nome_municipio',
+                     title=f'Taxa de declaração de renda vs Nota Média (municípios com ≥{min_records} registros)')
+    fig.update_xaxes(tickformat='.0%')
     fig.update_layout(margin=dict(t=40))
     return fig
 
@@ -302,7 +309,7 @@ def create_income_bar_chart(df, only_declared=False):
             return px.bar(title='Nenhum registro com faixa de renda declarada')
 
     if len(ordered_categories) <= 1:
-        # alternativa mais relevante: proporção declarado vs desconhecido + top municípios
+        # alternativa: retornamos None e a interface exibirá a visualização substituta
         return None
 
     renda_counts['order'] = renda_counts['faixa_renda_legivel'].apply(lambda x: ordered_categories.index(x) if x in ordered_categories else 999)
@@ -368,6 +375,18 @@ def create_income_vs_math_box_plot(df):
     return fig
 
 
+def short_label(s: str, maxlen=18) -> str:
+    # reduz rótulos como 'A - Nenhuma/Incompleto' -> 'Nenhuma' e trunca se muito longo
+    if pd.isna(s):
+        return ''
+    if ' - ' in s:
+        s2 = s.split(' - ', 1)[1]
+    else:
+        s2 = s
+    s2 = s2.strip()
+    return (s2 if len(s2) <= maxlen else s2[:maxlen-1] + '…')
+
+
 def create_parent_education_vs_mean_note(df):
     pivot_mean = df.groupby(['escolaridade_pai', 'escolaridade_mae'])['nota_media_5_notas'].mean().unstack(fill_value=np.nan)
     pivot_count = df.groupby(['escolaridade_pai', 'escolaridade_mae'])['nota_media_5_notas'].count().unstack(fill_value=0)
@@ -375,12 +394,15 @@ def create_parent_education_vs_mean_note(df):
     if pivot_mean.size == 0:
         return px.imshow([[np.nan]], title='Média das Notas vs. Escolaridade dos Pais (sem dados)')
 
-    x_labels = list(pivot_mean.columns)
-    y_labels = list(pivot_mean.index)
+    x_labels_full = list(pivot_mean.columns)
+    y_labels_full = list(pivot_mean.index)
+
+    x_labels = [short_label(x) for x in x_labels_full]
+    y_labels = [short_label(y) for y in y_labels_full]
 
     show_text = pivot_mean.size <= 64
     text_auto = '.2f' if show_text else False
-    height = 300 + 20 * max(len(x_labels), len(y_labels))
+    height = 300 + 30 * max(len(x_labels), len(y_labels))
 
     fig = px.imshow(pivot_mean.values,
                     x=x_labels,
@@ -390,14 +412,15 @@ def create_parent_education_vs_mean_note(df):
                     aspect='auto',
                     title='Média das Notas (5) por Escolaridade dos Pais')
 
-    fig.update_xaxes(tickangle=45, tickfont=dict(size=9))
+    # axis text menores e rotacionados para caber
+    fig.update_xaxes(tickangle=-45, tickfont=dict(size=8))
     fig.update_yaxes(tickfont=dict(size=9))
     fig.update_layout(margin=dict(t=60), height=height)
 
     hover_text = []
-    for i, y in enumerate(y_labels):
+    for i, y in enumerate(y_labels_full):
         row = []
-        for j, x in enumerate(x_labels):
+        for j, x in enumerate(x_labels_full):
             mean_val = pivot_mean.loc[y, x]
             cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
             if np.isnan(mean_val):
@@ -576,10 +599,9 @@ def main():
             pct_unknown = (df_filtrado['faixa_renda_legivel'].fillna('Desconhecido') == 'Desconhecido').mean()
             if fig3 is None or pct_unknown > 0.7:
                 st.warning("Mais de 70% dos registros têm faixa de renda 'Desconhecido'. Mostrando alternativas relevantes.")
-                fig_alt = create_declared_vs_unknown_pie(df_filtrado)
+                # novo tema: taxa de declaração vs nota média por município
+                fig_alt = create_declaration_vs_score_scatter(df_filtrado)
                 st.plotly_chart(fig_alt, use_container_width=True)
-                fig_topmun = create_top_mun_declared_bar(df_filtrado)
-                st.plotly_chart(fig_topmun, use_container_width=True)
             else:
                 st.plotly_chart(fig3, use_container_width=True)
         with col4:
