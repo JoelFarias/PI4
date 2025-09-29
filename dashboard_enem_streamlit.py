@@ -590,12 +590,12 @@ def main():
         col3, col4 = st.columns(2)
         with col3:
 
-            if fig3 is None or pct_unknown > 0.7:
+            if fig1 is None or pct_unknown > 0.7:
                 st.warning("Mais de 70% dos registros têm faixa de renda 'Desconhecido'. Mostrando alternativas relevantes.")
                 fig_alt = create_declaration_vs_score_scatter(df_filtrado)
                 st.plotly_chart(fig_alt, use_container_width=True)
             else:
-                st.plotly_chart(fig3, use_container_width=True)
+                st.plotly_chart(fig1, use_container_width=True)
         with col4:
             fig4 = create_notes_box_plot(df_filtrado)
             st.plotly_chart(fig4, use_container_width=True)
@@ -698,6 +698,7 @@ if __name__ == '__main__':
         st.error("Erro ao executar o aplicativo. Trace abaixo:")
         st.text(traceback.format_exc())
         print(traceback.format_exc())
+
 
 
 
