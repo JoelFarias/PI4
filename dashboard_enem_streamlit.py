@@ -589,12 +589,9 @@ def main():
 
         col3, col4 = st.columns(2)
         with col3:
-            # aplica filtro opcional para renda declarada
-            fig3 = create_income_bar_chart(df_filtrado, only_declared=show_only_declared_renda)
-            pct_unknown = (df_filtrado['faixa_renda_legivel'].fillna('Desconhecido') == 'Desconhecido').mean()
+
             if fig3 is None or pct_unknown > 0.7:
                 st.warning("Mais de 70% dos registros têm faixa de renda 'Desconhecido'. Mostrando alternativas relevantes.")
-                # novo tema: taxa de declaração vs nota média por município
                 fig_alt = create_declaration_vs_score_scatter(df_filtrado)
                 st.plotly_chart(fig_alt, use_container_width=True)
             else:
@@ -701,5 +698,6 @@ if __name__ == '__main__':
         st.error("Erro ao executar o aplicativo. Trace abaixo:")
         st.text(traceback.format_exc())
         print(traceback.format_exc())
+
 
 
