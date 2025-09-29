@@ -579,10 +579,10 @@ def main():
         col_sex, col_mean = st.columns(2)
         with col_sex:
             fig6 = create_pie_chart(df_filtrado, "sexo", "Distribuição por Sexo", textfont_size=12)
-            st.plotly_chart(fig6, use_container_width=True)
+            st.plotly_chart(fig6, use_container_width=True, key="sexo_pie_chart")
         with col_mean:
             fig_mean_box = create_notes_box_plot(df_filtrado)
-            st.plotly_chart(fig_mean_box, use_container_width=True)
+            st.plotly_chart(fig_mean_box, use_container_width=True, key="mean_note_boxplot")
 
         with st.expander("🔍 Detalhamento das Estatísticas"):
             st.subheader("Estatísticas Descritivas das Notas")
