@@ -569,8 +569,6 @@ def main():
         st.metric(label="Média Matemática", value=f"{media_matematica:.2f} pts")
     with col_met3:
         st.metric(label="Média Redação", value=f"{media_redacao:.2f} pts")
-    with col_met4:
-        st.metric(label="Regiões na seleção", value=f"{df_filtrado['regiao'].nunique()}")
 
     st.markdown("---")
 
@@ -703,4 +701,5 @@ if __name__ == '__main__':
         st.error("Erro ao executar o aplicativo. Trace abaixo:")
         st.text(traceback.format_exc())
         print(traceback.format_exc())
+
 
