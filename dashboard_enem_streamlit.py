@@ -42,28 +42,40 @@ escolaridade_map = {
 
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024...")
 def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
+    """Carrega uma amostra do banco com checagens e fallback robusto.
+
+    Problema corrigido: substituí verificações com `conn.execute(..., (param,))` por
+    `sqlalchemy.inspect` (inspector.has_table) para evitar erros de binding e mensagens
+    como "List argument must consist only of dictionaries" que surgiam em alguns drivers.
+    """
     connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     engine = None
     try:
         engine = create_engine(connection_string, pool_pre_ping=True)
-        with engine.connect() as conn:
-            conn.execute("SELECT 1")
+        inspector = None
+        try:
+            from sqlalchemy import inspect
+            inspector = inspect(engine)
+        except Exception:
+            inspector = None
 
-            def exists_table(table_name: str) -> bool:
-                q = ("SELECT to_regclass(%s)")
-                res = conn.execute(q, (table_name,)).scalar()
-                return res is not None
+        needed_tables = [
+            'ed_enem_2024_participantes',
+            'ed_enem_2024_resultados_amos_per',
+            'municipio'
+        ]
 
-            needed_tables = [
-                'ed_enem_2024_participantes',
-                'ed_enem_2024_resultados_amos_per',
-                'municipio'
-            ]
-            missing = [t for t in needed_tables if not exists_table(t)]
-            if missing:
-                st.error(f"Tabelas faltando no banco: {missing}. Verifique nomes/permissões.")
-                logging.error(f"Tabelas faltando: {missing}")
-                return pd.DataFrame()
+        missing = []
+        if inspector is not None:
+            missing = [t for t in needed_tables if not inspector.has_table(t)]
+        else:
+            # Fallback conservador: assume tables exist (we'll detect later when reading)
+            missing = []
+
+        if missing:
+            st.error(f"Tabelas faltando no banco: {missing}. Verifique nomes/permissões.")
+            logging.error(f"Tabelas faltando: {missing}")
+            return pd.DataFrame()
 
         order_clause = "ORDER BY RANDOM()" if randomize else ""
         query = f"""
@@ -108,49 +120,46 @@ def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
         logging.error("Erro SQL na query principal: %s", e)
         st.error("Erro SQL ao carregar dados (veja o log para detalhes). Tentando fallback rápido...")
 
-    # Fallback inteligente: tenta carregar amostras das tabelas participantes e resultados e fazer um merge
+    # Fallback robusto: carregar amostras e mesclar com heurísticas
     try:
         if engine is None:
             engine = create_engine(connection_string, pool_pre_ping=True)
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
 
-        with engine.connect() as conn:
-            def exists(table_name):
-                return conn.execute("SELECT to_regclass(%s)", (table_name,)).scalar() is not None
+        p_sample = pd.DataFrame()
+        r_sample = pd.DataFrame()
 
-            p_sample = pd.DataFrame()
-            r_sample = pd.DataFrame()
-            if exists('ed_enem_2024_participantes'):
-                p_query = f"SELECT nu_inscricao, q001, q002, q005, tp_sexo, tp_cor_raca, idade_calculada, co_municipio_prova, sg_uf_prova, regiao_nome_prova FROM ed_enem_2024_participantes LIMIT {quick_check_rows};"
-                p_sample = pd.read_sql(p_query, engine)
-            if exists('ed_enem_2024_resultados_amos_per'):
-                r_query = f"SELECT nu_sequencial, co_municipio_prova, sg_uf_prova, regiao_nome_prova, nota_cn_ciencias_da_natureza, nota_ch_ciencias_humanas, nota_lc_linguagens_e_codigos, nota_mt_matematica, nota_redacao, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT {quick_check_rows};"
-                r_sample = pd.read_sql(r_query, engine)
+        if inspector.has_table('ed_enem_2024_participantes'):
+            p_query = f"SELECT nu_inscricao, q001, q002, q005, tp_sexo, tp_cor_raca, idade_calculada, co_municipio_prova, sg_uf_prova, regiao_nome_prova FROM ed_enem_2024_participantes LIMIT {quick_check_rows};"
+            p_sample = pd.read_sql(p_query, engine)
+
+        if inspector.has_table('ed_enem_2024_resultados_amos_per'):
+            r_query = f"SELECT nu_sequencial, co_municipio_prova, sg_uf_prova, regiao_nome_prova, nota_cn_ciencias_da_natureza, nota_ch_ciencias_humanas, nota_lc_linguagens_e_codigos, nota_mt_matematica, nota_redacao, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT {quick_check_rows};"
+            r_sample = pd.read_sql(r_query, engine)
 
         merged = pd.DataFrame()
         if not p_sample.empty and not r_sample.empty:
             r_sample['nu_sequencial'] = r_sample['nu_sequencial'].astype(str)
             merged = p_sample.merge(r_sample, left_on='nu_inscricao', right_on='nu_sequencial', how='left')
-            if merged['nota_media_5_notas'].notna().sum() > 0:
+            if 'nota_media_5_notas' in merged.columns and merged['nota_media_5_notas'].notna().sum() > 0:
                 st.warning('Fallback: participantes + resultados carregados e mesclados (merge por inscrição).')
                 logging.info(f"Fallback merge bem-sucedido: {len(merged)} registros, {merged['nota_media_5_notas'].notna().sum()} com nota.")
                 return merged
 
-        # Se não foi possível casar por inscrição, tenta casar por município quando houver co_municipio_prova
         if not p_sample.empty and not r_sample.empty:
             if 'co_municipio_prova' in p_sample.columns and 'co_municipio_prova' in r_sample.columns:
                 merged_by_mun = p_sample.merge(r_sample, on='co_municipio_prova', how='left')
-                if merged_by_mun['nota_media_5_notas'].notna().sum() > 0:
+                if 'nota_media_5_notas' in merged_by_mun.columns and merged_by_mun['nota_media_5_notas'].notna().sum() > 0:
                     st.warning('Fallback: merge por município realizado (menos preciso).')
                     logging.info(f"Fallback merge por município: {len(merged_by_mun)} registros, {merged_by_mun['nota_media_5_notas'].notna().sum()} com nota.")
                     return merged_by_mun
 
-        # Se só tiver participantes, retorna participantes com aviso (já estava acontecendo)
         if not p_sample.empty:
             st.warning('Fallback: carregados apenas dados da tabela participantes para diagnóstico.')
             logging.info(f"Fallback participantes apenas: {len(p_sample)} registros carregados.")
             return p_sample
 
-        # Se só tiver resultados retorna eles
         if not r_sample.empty:
             st.warning('Fallback: carregados apenas dados da tabela resultados para diagnóstico.')
             logging.info(f"Fallback resultados apenas: {len(r_sample)} registros carregados.")
