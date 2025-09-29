@@ -246,26 +246,36 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # -------------------- Novas visualizações para casos com muitos 'Desconhecido' --------------------
-
 def create_declaration_vs_score_scatter(df):
-    df_plot = df.copy()
-    df_plot['Declarou Renda'] = np.where(df_plot['faixa_renda_legivel'] == 'Desconhecido', 'Não Declarou', 'Declarou')
-    fig = px.violin(
-        df_plot,
-        x='Declarou Renda',
-        y='nota_media_5_notas',
-        box=True,
-        points='all',
-        color='Declarou Renda',
-        title='Distribuição das Notas Médias por Declaração de Renda',
-        labels={'nota_media_5_notas': 'Nota Média (5 Áreas)'}
-    )
-    fig.update_layout(
-        height=420,
-        margin=dict(t=60, b=60),
-        xaxis_title='Status de Declaração de Renda',
-        yaxis_title='Nota Média (5 Áreas)'
-    )
+    fig = create_income_bar_chart(df)
+    if fig is None or (hasattr(fig, "data") and len(fig.data) == 0):
+        fig = px.histogram(
+            df,
+            x="idade",
+            nbins=30,
+            title="Distribuição de Idades dos Participantes",
+            labels={"idade": "Idade"},
+            color_discrete_sequence=["#636EFA"]
+        )
+        fig.update_traces(marker_line_width=1.5, marker_line_color="white", opacity=0.85)
+        fig.update_layout(
+            yaxis_title="Quantidade",
+            xaxis_title="Idade",
+            height=400,
+            margin=dict(t=50, b=50),
+            plot_bgcolor="#F9FAFB",
+            bargap=0.18,
+            bargroupgap=0.04
+        )
+    else:
+        fig.update_traces(marker_line_width=1.5, marker_line_color="white", opacity=0.85)
+        fig.update_layout(
+            height=400,
+            margin=dict(t=50, b=50),
+            plot_bgcolor="#F9FAFB",
+            bargap=0.18,
+            bargroupgap=0.04
+        )
     return fig
 
 
