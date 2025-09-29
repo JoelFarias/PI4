@@ -390,10 +390,22 @@ def create_notes_box_plot(df):
 
 def create_income_vs_math_box_plot(df):
 
-    # Se mais de 70% dos dados são 'Desconhecido', usa visualização alternativa
+    # Se mais de 70% dos dados são 'Desconhecido', usa visualização alternativa 
     pct_unknown = (df['faixa_renda_legivel'] == 'Desconhecido').mean()
     if pct_unknown > 0.7:
-        return create_declaration_vs_score_scatter(df)
+        # Em vez de repetir o gráfico, mostra uma mensagem útil
+        fig = go.Figure()
+        fig.add_annotation(
+            text="Dados de renda insuficientes. Use a visão de declaração vs notas acima.",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            showarrow=False
+        )
+        fig.update_layout(
+            title='Nota: Maioria dos registros sem renda declarada',
+            height=300
+        )
+        return fig
         
     # Remove registros 'Desconhecido' e calcula estatísticas
     df_known = df[df['faixa_renda_legivel'] != 'Desconhecido'].copy()
