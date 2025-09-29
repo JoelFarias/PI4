@@ -389,7 +389,67 @@ def create_notes_box_plot(df):
 
 
 def create_income_vs_math_box_plot(df):
-    return 
+
+    # Se mais de 70% dos dados são 'Desconhecido', usa visualização alternativa
+    pct_unknown = (df['faixa_renda_legivel'] == 'Desconhecido').mean()
+    if pct_unknown > 0.7:
+        return create_declaration_vs_score_scatter(df)
+        
+    # Remove registros 'Desconhecido' e calcula estatísticas
+    df_known = df[df['faixa_renda_legivel'] != 'Desconhecido'].copy()
+    if len(df_known) < 100:
+        return px.box(title='Dados de renda insuficientes para análise')
+
+    # Cria boxplot com pontos de média sobrepostos
+    fig = go.Figure()
+    
+    # Adiciona boxplots
+    fig.add_trace(go.Box(
+        x=df_known['faixa_renda_legivel'],
+        y=df_known['nota_mt_matematica'],
+        name='Distribuição',
+        boxpoints='outliers',
+        marker_color='lightblue',
+        showlegend=True
+    ))
+    
+    # Calcula e adiciona médias como pontos destacados
+    means = df_known.groupby('faixa_renda_legivel')['nota_mt_matematica'].mean()
+    counts = df_known.groupby('faixa_renda_legivel')['nota_mt_matematica'].count()
+    
+    fig.add_trace(go.Scatter(
+        x=means.index,
+        y=means.values,
+        mode='markers',
+        name='Média',
+        marker=dict(
+            color='red',
+            size=10,
+            symbol='diamond'
+        ),
+        customdata=np.stack((counts, means), axis=1),
+        hovertemplate="Faixa: %{x}<br>Média: %{y:.1f}<br>N: %{customdata[0]}<extra></extra>"
+    ))
+
+    # Layout
+    fig.update_layout(
+        title='Distribuição das Notas de Matemática por Faixa de Renda',
+        xaxis_title='Faixa de Renda',
+        yaxis_title='Nota em Matemática',
+        xaxis_tickangle=-45,
+        height=500,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(l=20, r=20, t=60, b=120)
+    )
+    
+    return fig
 
 
 def short_label(s: str, maxlen=18) -> str:
