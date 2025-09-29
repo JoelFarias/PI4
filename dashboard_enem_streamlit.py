@@ -440,188 +440,207 @@ def perform_predictive_analysis(df: pd.DataFrame):
 
 
 # -------------------- Interface Streamlit (ajustes pedidos) --------------------
-st.title("📊 ENEM 2024 - Dashboard Socioeconômico (Agregado Municipal)")
-st.markdown("---")
 
-# Carrega os dados
-df_raw = load_data(sample_size=None)
-if df_raw.empty:
-    st.error("⚠️ Não foi possível carregar dados. Verifique a conexão/configurações do banco.")
-    st.stop()
+def main():
+    st.title("📊 ENEM 2024 - Dashboard Socioeconômico (Agregado Municipal)")
+    st.markdown("---")
 
-# Decodifica categorias e preenche notas com médias municipais quando necessário
-df = decode_enem_categories(df_raw)
+    # Carrega os dados
+    try:
+        df_raw = load_data(sample_size=50000)
+    except Exception as e:
+        import traceback
+        st.error("Erro ao carregar dados: veja o traceback abaixo:")
+        st.text(traceback.format_exc())
+        st.stop()
 
-# opção no sidebar: mostrar apenas renda declarada para o gráfico de renda
-st.sidebar.header("Filtros do Dashboard")
-show_only_declared_renda = st.sidebar.checkbox("Mostrar apenas registros com renda declarada (Q005)", value=False)
+    if df_raw.empty:
+        st.error("⚠️ Não foi possível carregar dados. Verifique a conexão/configurações do banco.")
+        st.stop()
 
-regioes = ["Todas"] + sorted(df["regiao"].dropna().unique())
-ufs = ["Todas"] + sorted(df["uf"].dropna().unique())
-generos = ["Todos"] + sorted(df["sexo"].dropna().unique())
-rendas_unicas = sorted(df["faixa_renda"].dropna().unique(), key=lambda x: list(Q005_MAP.keys()).index(x) if x in Q005_MAP else 99)
-rendas_legiveis = [Q005_MAP.get(r, r) for r in rendas_unicas]
-rendas_map_rev = {v: k for k, v in Q005_MAP.items()}
+    # Decodifica categorias e preenche notas com médias municipais quando necessário
+    df = decode_enem_categories(df_raw)
 
-regiao_sel = st.sidebar.selectbox("Região", regioes)
-uf_sel = st.sidebar.selectbox("UF", ufs)
-genero_sel = st.sidebar.selectbox("Sexo", generos)
-renda_sel_legivel = st.sidebar.selectbox("Faixa de Renda", ["Todas"] + rendas_legiveis)
+    # opção no sidebar: mostrar apenas renda declarada para o gráfico de renda
+    st.sidebar.header("Filtros do Dashboard")
+    show_only_declared_renda = st.sidebar.checkbox("Mostrar apenas registros com renda declarada (Q005)", value=False)
 
-# Aplica filtros
-df_filtrado = df.copy()
-if regiao_sel != "Todas":
-    df_filtrado = df_filtrado[df_filtrado["regiao"] == regiao_sel]
-if uf_sel != "Todas":
-    df_filtrado = df_filtrado[df_filtrado["uf"] == uf_sel]
-if genero_sel != "Todos":
-    df_filtrado = df_filtrado[df_filtrado["sexo"] == genero_sel]
-if renda_sel_legivel != "Todas":
-    renda_sel_codigo = rendas_map_rev.get(renda_sel_legivel)
-    if renda_sel_codigo:
-        df_filtrado = df_filtrado[df_filtrado["faixa_renda"] == renda_sel_codigo]
+    regioes = ["Todas"] + sorted(df["regiao"].dropna().unique())
+    ufs = ["Todas"] + sorted(df["uf"].dropna().unique())
+    generos = ["Todos"] + sorted(df["sexo"].dropna().unique())
+    rendas_unicas = sorted(df["faixa_renda"].dropna().unique(), key=lambda x: list(Q005_MAP.keys()).index(x) if x in Q005_MAP else 99)
+    rendas_legiveis = [Q005_MAP.get(r, r) for r in rendas_unicas]
+    rendas_map_rev = {v: k for k, v in Q005_MAP.items()}
 
-# Mantém apenas registros com nota válida
-df_filtrado = df_filtrado.dropna(subset=['nota_media_5_notas'])
-df_filtrado = df_filtrado[df_filtrado['nota_media_5_notas'] > 0]
+    regiao_sel = st.sidebar.selectbox("Região", regioes)
+    uf_sel = st.sidebar.selectbox("UF", ufs)
+    genero_sel = st.sidebar.selectbox("Sexo", generos)
+    renda_sel_legivel = st.sidebar.selectbox("Faixa de Renda", ["Todas"] + rendas_legiveis)
 
-st.markdown("---")
+    # Aplica filtros
+    df_filtrado = df.copy()
+    if regiao_sel != "Todas":
+        df_filtrado = df_filtrado[df_filtrado["regiao"] == regiao_sel]
+    if uf_sel != "Todas":
+        df_filtrado = df_filtrado[df_filtrado["uf"] == uf_sel]
+    if genero_sel != "Todos":
+        df_filtrado = df_filtrado[df_filtrado["sexo"] == genero_sel]
+    if renda_sel_legivel != "Todas":
+        renda_sel_codigo = rendas_map_rev.get(renda_sel_legivel)
+        if renda_sel_codigo:
+            df_filtrado = df_filtrado[df_filtrado["faixa_renda"] == renda_sel_codigo]
 
-if len(df_filtrado) == 0:
-    st.warning("⚠️ Nenhum registro encontrado com os filtros selecionados. Tente expandir sua seleção.")
-    st.stop()
-
-# Métricas rápidas (sem exibir contagens totais explícitas que você pediu para remover)
-st.header("Análise Descritiva Rápida")
-col_met1, col_met2, col_met3, col_met4 = st.columns(4)
-
-media_geral = df_filtrado['nota_media_5_notas'].mean()
-media_matematica = df_filtrado['nota_mt_matematica'].mean()
-media_redacao = df_filtrado['nota_redacao'].mean()
-
-with col_met1:
-    st.metric(label="Média Geral (5 Notas)", value=f"{media_geral:.2f} pts")
-with col_met2:
-    st.metric(label="Média Matemática", value=f"{media_matematica:.2f} pts")
-with col_met3:
-    st.metric(label="Média Redação", value=f"{media_redacao:.2f} pts")
-with col_met4:
-    st.metric(label="Regiões na seleção", value=f"{df_filtrado['regiao'].nunique()}")
-
-st.markdown("---")
-
-# Abas
-tab1, tab2 = st.tabs(["Análise Exploratória", "Análise Preditiva e Relatório"])
-
-with tab1:
-    st.subheader("Análise Socioeconômica e Notas do ENEM")
-    col1, col2 = st.columns(2)
-    with col1:
-        fig1 = create_pie_chart(df_filtrado, "escolaridade_pai", "Escolaridade do Pai", textfont_size=11)
-        st.plotly_chart(fig1, use_container_width=True)
-    with col2:
-        fig2 = create_pie_chart(df_filtrado, "escolaridade_mae", "Escolaridade da Mãe", textfont_size=11)
-        st.plotly_chart(fig2, use_container_width=True)
+    # Mantém apenas registros com nota válida
+    df_filtrado = df_filtrado.dropna(subset=['nota_media_5_notas'])
+    df_filtrado = df_filtrado[df_filtrado['nota_media_5_notas'] > 0]
 
     st.markdown("---")
 
-    col3, col4 = st.columns(2)
-    with col3:
-        # aplica filtro opcional para renda declarada
-        fig3 = create_income_bar_chart(df_filtrado, only_declared=show_only_declared_renda)
-        # se muitos registros mostraram 'Desconhecido', avisar
-        pct_unknown = (df_filtrado['faixa_renda_legivel'].fillna('Desconhecido') == 'Desconhecido').mean()
-        if pct_unknown > 0.7:
-            st.warning("Mais de 70% dos registros têm faixa de renda 'Desconhecido'. Use 'Mostrar apenas registros com renda declarada' no sidebar para visualizar faixas quando disponível.")
-        st.plotly_chart(fig3, use_container_width=True)
-    with col4:
-        fig4 = create_notes_box_plot(df_filtrado)
-        st.plotly_chart(fig4, use_container_width=True)
+    if len(df_filtrado) == 0:
+        st.warning("⚠️ Nenhum registro encontrado com os filtros selecionados. Tente expandir sua seleção.")
+        st.stop()
+
+    # Métricas rápidas (sem exibir contagens totais explícitas que você pediu para remover)
+    st.header("Análise Descritiva Rápida")
+    col_met1, col_met2, col_met3, col_met4 = st.columns(4)
+
+    media_geral = df_filtrado['nota_media_5_notas'].mean()
+    media_matematica = df_filtrado['nota_mt_matematica'].mean()
+    media_redacao = df_filtrado['nota_redacao'].mean()
+
+    with col_met1:
+        st.metric(label="Média Geral (5 Notas)", value=f"{media_geral:.2f} pts")
+    with col_met2:
+        st.metric(label="Média Matemática", value=f"{media_matematica:.2f} pts")
+    with col_met3:
+        st.metric(label="Média Redação", value=f"{media_redacao:.2f} pts")
+    with col_met4:
+        st.metric(label="Regiões na seleção", value=f"{df_filtrado['regiao'].nunique()}")
 
     st.markdown("---")
 
-    fig_parent_notes = create_parent_education_vs_mean_note(df_filtrado)
-    st.plotly_chart(fig_parent_notes, use_container_width=True)
+    # Abas
+    tab1, tab2 = st.tabs(["Análise Exploratória", "Análise Preditiva e Relatório"])
 
-    st.markdown("---")
+    with tab1:
+        st.subheader("Análise Socioeconômica e Notas do ENEM")
+        col1, col2 = st.columns(2)
+        with col1:
+            fig1 = create_pie_chart(df_filtrado, "escolaridade_pai", "Escolaridade do Pai", textfont_size=11)
+            st.plotly_chart(fig1, use_container_width=True)
+        with col2:
+            fig2 = create_pie_chart(df_filtrado, "escolaridade_mae", "Escolaridade da Mãe", textfont_size=11)
+            st.plotly_chart(fig2, use_container_width=True)
 
-    # mostrar apenas o boxplot de renda vs matemática em largura completa (removido gráfico lateral confuso)
-    st.subheader('Impacto da Renda na Nota de Matemática')
-    fig5 = create_income_vs_math_box_plot(df_filtrado)
-    st.plotly_chart(fig5, use_container_width=True)
-    st.caption('Nota: quando nota individual não estiver disponível, usamos a média municipal como proxy/contexto. O boxplot mostra distribuição por faixa de renda (quando declarada).')
+        st.markdown("---")
 
-    # agora a distribuição por sexo em bloco separado, com contraste melhor
-    st.subheader('Distribuição por Sexo')
-    fig6 = create_pie_chart(df_filtrado, "sexo", "Distribuição por Sexo", textfont_size=12)
-    st.plotly_chart(fig6, use_container_width=True)
+        col3, col4 = st.columns(2)
+        with col3:
+            # aplica filtro opcional para renda declarada
+            fig3 = create_income_bar_chart(df_filtrado, only_declared=show_only_declared_renda)
+            # se muitos registros mostraram 'Desconhecido', avisar
+            pct_unknown = (df_filtrado['faixa_renda_legivel'].fillna('Desconhecido') == 'Desconhecido').mean()
+            if pct_unknown > 0.7:
+                st.warning("Mais de 70% dos registros têm faixa de renda 'Desconhecido'. Use 'Mostrar apenas registros com renda declarada' no sidebar para visualizar faixas quando disponível.")
+            st.plotly_chart(fig3, use_container_width=True)
+        with col4:
+            fig4 = create_notes_box_plot(df_filtrado)
+            st.plotly_chart(fig4, use_container_width=True)
 
-    with st.expander("🔍 Detalhamento das Estatísticas"):
-        st.subheader("Estatísticas Descritivas das Notas")
-        st.dataframe(df_filtrado[[
+        st.markdown("---")
+
+        fig_parent_notes = create_parent_education_vs_mean_note(df_filtrado)
+        st.plotly_chart(fig_parent_notes, use_container_width=True)
+
+        st.markdown("---")
+
+        # mostrar apenas o boxplot de renda vs matemática em largura completa (removido gráfico lateral confuso)
+        st.subheader('Impacto da Renda na Nota de Matemática')
+        fig5 = create_income_vs_math_box_plot(df_filtrado)
+        st.plotly_chart(fig5, use_container_width=True)
+        st.caption('Nota: quando nota individual não estiver disponível, usamos a média municipal como proxy/contexto. O boxplot mostra distribuição por faixa de renda (quando declarada).')
+
+        # agora a distribuição por sexo em bloco separado, com contraste melhor
+        st.subheader('Distribuição por Sexo')
+        fig6 = create_pie_chart(df_filtrado, "sexo", "Distribuição por Sexo", textfont_size=12)
+        st.plotly_chart(fig6, use_container_width=True)
+
+        with st.expander("🔍 Detalhamento das Estatísticas"):
+            st.subheader("Estatísticas Descritivas das Notas")
+            st.dataframe(df_filtrado[[
+                "nota_cn_ciencias_da_natureza", "nota_ch_ciencias_humanas",
+                "nota_lc_linguagens_e_codigos", "nota_mt_matematica",
+                "nota_redacao", "nota_media_5_notas"
+            ]].describe().style.format(precision=2), use_container_width=True)
+
+            st.subheader("Distribuição de Idades")
+            fig_idade = px.histogram(df_filtrado, x="idade", nbins=30, title="Distribuição de Idades dos Participantes")
+            st.plotly_chart(fig_idade, use_container_width=True)
+
+            st.subheader("Distribuição por Cor/Raça")
+            fig_cor = create_pie_chart(df_filtrado, "cor_raca", "Distribuição por Cor/Raça", textfont_size=11)
+            st.plotly_chart(fig_cor, use_container_width=True)
+
+        st.markdown("---")
+
+        st.subheader("Análise Exploratória Adicional")
+        numeric_cols = [
             "nota_cn_ciencias_da_natureza", "nota_ch_ciencias_humanas",
             "nota_lc_linguagens_e_codigos", "nota_mt_matematica",
-            "nota_redacao", "nota_media_5_notas"
-        ]].describe().style.format(precision=2), use_container_width=True)
+            "nota_redacao", "nota_media_5_notas", "idade"
+        ]
+        corr = df_filtrado[numeric_cols].corr()
+        fig_corr = px.imshow(corr, text_auto=True, title="Matriz de Correlação entre Notas e Idade")
+        st.plotly_chart(fig_corr, use_container_width=True)
 
-        st.subheader("Distribuição de Idades")
-        fig_idade = px.histogram(df_filtrado, x="idade", nbins=30, title="Distribuição de Idades dos Participantes")
-        st.plotly_chart(fig_idade, use_container_width=True)
+        st.subheader("Top 10 Municípios por Nota Média")
+        top_mun = df_filtrado.groupby('nome_municipio').agg(
+            nota_media=('nota_media_5_notas', 'mean'),
+            participantes=('nota_media_5_notas', 'count')
+        ).reset_index().sort_values(by='nota_media', ascending=False).head(10)
+        st.dataframe(top_mun.style.format({'nota_media': '{:.2f}', 'participantes': '{:,}'}), use_container_width=True)
 
-        st.subheader("Distribuição por Cor/Raça")
-        fig_cor = create_pie_chart(df_filtrado, "cor_raca", "Distribuição por Cor/Raça", textfont_size=11)
-        st.plotly_chart(fig_cor, use_container_width=True)
-
-    st.markdown("---")
-
-    st.subheader("Análise Exploratória Adicional")
-    numeric_cols = [
-        "nota_cn_ciencias_da_natureza", "nota_ch_ciencias_humanas",
-        "nota_lc_linguagens_e_codigos", "nota_mt_matematica",
-        "nota_redacao", "nota_media_5_notas", "idade"
-    ]
-    corr = df_filtrado[numeric_cols].corr()
-    fig_corr = px.imshow(corr, text_auto=True, title="Matriz de Correlação entre Notas e Idade")
-    st.plotly_chart(fig_corr, use_container_width=True)
-
-    st.subheader("Top 10 Municípios por Nota Média")
-    top_mun = df_filtrado.groupby('nome_municipio').agg(
-        nota_media=('nota_media_5_notas', 'mean'),
-        participantes=('nota_media_5_notas', 'count')
-    ).reset_index().sort_values(by='nota_media', ascending=False).head(10)
-    st.dataframe(top_mun.style.format({'nota_media': '{:.2f}', 'participantes': '{:,}'}), use_container_width=True)
-
-with tab2:
-    st.subheader("🔬 Análise Preditiva: Impacto Socioeconômico na Nota Média")
-    st.markdown("""O modelo Random Forest Regressor foi treinado para prever a Nota Média usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
+    with tab2:
+        st.subheader("🔬 Análise Preditiva: Impacto Socioeconômico na Nota Média")
+        st.markdown("""O modelo Random Forest Regressor foi treinado para prever a Nota Média usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
 
 ATENÇÃO: quando a nota individual do participante não existir, utilizamos a média municipal como proxy/contexto (é uma aproximação).""")
-    r2, importance_df = perform_predictive_analysis(df_filtrado)
-    if r2 == 0:
-        st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo com os filtros atuais.")
-    else:
-        col_r2, col_samples = st.columns(2)
-        with col_r2:
-            st.metric(label="Coeficiente de Determinação ($R^2$)", value=f"{r2:.4f}")
-        with col_samples:
-            st.metric(label="Amostra para Predição", value=f"{len(df_filtrado):,}")
+        r2, importance_df = perform_predictive_analysis(df_filtrado)
+        if r2 == 0:
+            st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo com os filtros atuais.")
+        else:
+            col_r2, col_samples = st.columns(2)
+            with col_r2:
+                st.metric(label="Coeficiente de Determinação ($R^2$)", value=f"{r2:.4f}")
+            with col_samples:
+                st.metric(label="Amostra para Predição", value=f"{len(df_filtrado):,}")
 
-        st.markdown("### Importância das Variáveis")
-        fig_importance = px.bar(
-            importance_df.head(20),
-            x='Importância',
-            y='Variável',
-            color='Tipo',
-            orientation='h',
-            title='Top 20 Fatores Socioeconômicos Mais Importantes (Random Forest)',
-            height=600
-        )
-        st.plotly_chart(fig_importance, use_container_width=True)
+            st.markdown("### Importância das Variáveis")
+            fig_importance = px.bar(
+                importance_df.head(20),
+                x='Importância',
+                y='Variável',
+                color='Tipo',
+                orientation='h',
+                title='Top 20 Fatores Socioeconômicos Mais Importantes (Random Forest)',
+                height=600
+            )
+            st.plotly_chart(fig_importance, use_container_width=True)
 
-st.markdown("---")
-with st.expander("📄 Ver Dados Brutos Filtrados"):
-    st.dataframe(df_filtrado, use_container_width=True)
+    st.markdown("---")
+    with st.expander("📄 Ver Dados Brutos Filtrados"):
+        st.dataframe(df_filtrado, use_container_width=True)
 
-st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
+    st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
 
 
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception:
+        import traceback
+        # mostra traceback no app para diagnóstico
+        st.error("Erro ao executar o aplicativo. Trace abaixo:")
+        st.text(traceback.format_exc())
+        # também imprime no stdout para logs do servidor
+        print(traceback.format_exc())
