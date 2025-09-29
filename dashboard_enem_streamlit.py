@@ -42,16 +42,6 @@ escolaridade_map = {
 
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024...")
 def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
-    """Carrega uma amostra do banco com checagens e fallback automáticos.
-
-    Parâmetros
-    - sample_size: número de registros a carregar (padrão 50000)
-    - randomize: se True usa ORDER BY RANDOM() (pode ser lento em tabelas grandes)
-    - quick_check_rows: número de linhas para consultas de verificação rápidas em fallback
-
-    O objetivo desta versão é facilitar o diagnóstico quando a carga não ocorre — ela testa a conexão,
-    verifica existência das tabelas, tenta a query principal e tem um fallback para uma query mais simples.
-    """
     connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     engine = None
     try:
@@ -108,28 +98,70 @@ def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
         """
 
         df = pd.read_sql(query, engine)
-        logging.info(f"Query principal executada com sucesso: {len(df)} registros carregados.")
-        return df
+        if df is not None and len(df) > 0:
+            logging.info(f"Query principal executada com sucesso: {len(df)} registros carregados.")
+            return df
+        else:
+            logging.warning("Query principal retornou 0 linhas — tentando fallback inteligente.")
 
     except SQLAlchemyError as e:
         logging.error("Erro SQL na query principal: %s", e)
         st.error("Erro SQL ao carregar dados (veja o log para detalhes). Tentando fallback rápido...")
 
-        try:
-            engine = create_engine(connection_string, pool_pre_ping=True) if engine is None else engine
-            fallback_query = f"SELECT * FROM ed_enem_2024_participantes LIMIT {quick_check_rows};"
-            df = pd.read_sql(fallback_query, engine)
-            logging.info(f"Fallback bem-sucedido: {len(df)} registros da tabela participantes carregados.")
-            st.warning("Fallback: carregados apenas dados da tabela participantes para diagnóstico.")
-            return df
-        except Exception as e2:
-            logging.exception("Fallback também falhou: %s", e2)
-            st.error(f"Fallback falhou. Detalhes: {e2}")
-            return pd.DataFrame()
+    # Fallback inteligente: tenta carregar amostras das tabelas participantes e resultados e fazer um merge
+    try:
+        if engine is None:
+            engine = create_engine(connection_string, pool_pre_ping=True)
 
-    except Exception as e:
-        logging.exception("Erro inesperado ao carregar dados: %s", e)
-        st.error(f"Erro inesperado ao carregar dados. Detalhes: {e}")
+        with engine.connect() as conn:
+            def exists(table_name):
+                return conn.execute("SELECT to_regclass(%s)", (table_name,)).scalar() is not None
+
+            p_sample = pd.DataFrame()
+            r_sample = pd.DataFrame()
+            if exists('ed_enem_2024_participantes'):
+                p_query = f"SELECT nu_inscricao, q001, q002, q005, tp_sexo, tp_cor_raca, idade_calculada, co_municipio_prova, sg_uf_prova, regiao_nome_prova FROM ed_enem_2024_participantes LIMIT {quick_check_rows};"
+                p_sample = pd.read_sql(p_query, engine)
+            if exists('ed_enem_2024_resultados_amos_per'):
+                r_query = f"SELECT nu_sequencial, co_municipio_prova, sg_uf_prova, regiao_nome_prova, nota_cn_ciencias_da_natureza, nota_ch_ciencias_humanas, nota_lc_linguagens_e_codigos, nota_mt_matematica, nota_redacao, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT {quick_check_rows};"
+                r_sample = pd.read_sql(r_query, engine)
+
+        merged = pd.DataFrame()
+        if not p_sample.empty and not r_sample.empty:
+            r_sample['nu_sequencial'] = r_sample['nu_sequencial'].astype(str)
+            merged = p_sample.merge(r_sample, left_on='nu_inscricao', right_on='nu_sequencial', how='left')
+            if merged['nota_media_5_notas'].notna().sum() > 0:
+                st.warning('Fallback: participantes + resultados carregados e mesclados (merge por inscrição).')
+                logging.info(f"Fallback merge bem-sucedido: {len(merged)} registros, {merged['nota_media_5_notas'].notna().sum()} com nota.")
+                return merged
+
+        # Se não foi possível casar por inscrição, tenta casar por município quando houver co_municipio_prova
+        if not p_sample.empty and not r_sample.empty:
+            if 'co_municipio_prova' in p_sample.columns and 'co_municipio_prova' in r_sample.columns:
+                merged_by_mun = p_sample.merge(r_sample, on='co_municipio_prova', how='left')
+                if merged_by_mun['nota_media_5_notas'].notna().sum() > 0:
+                    st.warning('Fallback: merge por município realizado (menos preciso).')
+                    logging.info(f"Fallback merge por município: {len(merged_by_mun)} registros, {merged_by_mun['nota_media_5_notas'].notna().sum()} com nota.")
+                    return merged_by_mun
+
+        # Se só tiver participantes, retorna participantes com aviso (já estava acontecendo)
+        if not p_sample.empty:
+            st.warning('Fallback: carregados apenas dados da tabela participantes para diagnóstico.')
+            logging.info(f"Fallback participantes apenas: {len(p_sample)} registros carregados.")
+            return p_sample
+
+        # Se só tiver resultados retorna eles
+        if not r_sample.empty:
+            st.warning('Fallback: carregados apenas dados da tabela resultados para diagnóstico.')
+            logging.info(f"Fallback resultados apenas: {len(r_sample)} registros carregados.")
+            return r_sample
+
+        st.error('Fallback falhou: nenhuma tabela disponível ou consulta inesperada.')
+        return pd.DataFrame()
+
+    except Exception as e2:
+        logging.exception("Fallback também falhou: %s", e2)
+        st.error(f"Fallback falhou. Detalhes: {e2}")
         return pd.DataFrame()
 
     finally:
