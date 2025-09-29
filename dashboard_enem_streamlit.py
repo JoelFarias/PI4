@@ -597,10 +597,15 @@ def main():
         st.plotly_chart(fig5, use_container_width=True, key="income_vs_math_boxplot")
         st.caption('Nota: quando nota individual não estiver disponível, usamos a média municipal como proxy/contexto. O gráfico mostrado depende da disponibilidade de faixas de renda declaradas.')
 
-        # agora a distribuição por sexo em bloco separado, com contraste melhor
-        st.subheader('Distribuição por Sexo')
-        fig6 = create_pie_chart(df_filtrado, "sexo", "Distribuição por Sexo", textfont_size=12)
-        st.plotly_chart(fig6, use_container_width=True)
+        # agora a distribuição por sexo e o boxplot de matemática lado a lado
+        st.subheader('Distribuição por Sexo e Notas de Matemática')
+        col_sex, col_math = st.columns(2)
+        with col_sex:
+            fig6 = create_pie_chart(df_filtrado, "sexo", "Distribuição por Sexo", textfont_size=12)
+            st.plotly_chart(fig6, use_container_width=True)
+        with col_math:
+            fig_math_box = create_income_vs_math_box_plot(df_filtrado)
+            st.plotly_chart(fig_math_box, use_container_width=True)
 
         with st.expander("🔍 Detalhamento das Estatísticas"):
             st.subheader("Estatísticas Descritivas das Notas")
