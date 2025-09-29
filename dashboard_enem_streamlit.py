@@ -443,6 +443,7 @@ def create_income_vs_math_box_plot(df):
     
     return fig
 
+
 def short_label(s: str, maxlen=18) -> str:
     if pd.isna(s):
         return ''
@@ -665,7 +666,7 @@ def main():
         st.markdown("---")
         st.subheader('Impacto da Renda na Nota de Matemática')
         fig5 = create_income_vs_math_box_plot(df_filtrado)
-        st.plotly_chart(fig5, use_container_width=True)
+        st.plotly_chart(fig5, use_container_width=True, key="income_vs_math_boxplot")
         st.caption('Nota: quando nota individual não estiver disponível, usamos a média municipal como proxy/contexto. O gráfico mostrado depende da disponibilidade de faixas de renda declaradas.')
 
         # agora a distribuição por sexo em bloco separado, com contraste melhor
