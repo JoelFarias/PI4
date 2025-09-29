@@ -249,8 +249,7 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_declaration_vs_score_scatter(df):
     """
-    Cria uma visualização simples comparando desempenho entre grupos com renda
-    declarada vs não declarada.
+    Substituído: retorna um gráfico de distribuição de idades dos participantes.
     """
     # Prepara os dados
     df['tem_declaracao'] = df['faixa_renda_legivel'] != 'Desconhecido'
