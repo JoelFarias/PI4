@@ -365,9 +365,9 @@ def create_parent_education_vs_mean_note(df):
             mean_val = pivot_mean.loc[y, x]
             cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
             if np.isnan(mean_val):
-                row.append(f"Média: n/a\\nContagem: {cnt}")
+                row.append(f"Média: n/a\nContagem: {cnt}")
             else:
-                row.append(f"Média: {mean_val:.2f}\\nContagem: {cnt}")
+                row.append(f"Média: {mean_val:.2f}\nContagem: {cnt}")
         hover_text.append(row)
 
     fig.data[0].hovertemplate = '%{y}<br>%{x}<br>%{customdata}<extra></extra>'
@@ -593,9 +593,9 @@ with tab1:
 
 with tab2:
     st.subheader("🔬 Análise Preditiva: Impacto Socioeconômico na Nota Média")
-    st.markdown("O modelo Random Forest Regressor foi treinado para prever a Nota Média usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
+    st.markdown("""O modelo Random Forest Regressor foi treinado para prever a Nota Média usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
 
-ATENÇÃO: quando a nota individual do participante não existir, utilizamos a média municipal como proxy/contexto (é uma aproximação).")
+ATENÇÃO: quando a nota individual do participante não existir, utilizamos a média municipal como proxy/contexto (é uma aproximação).""")
     r2, importance_df = perform_predictive_analysis(df_filtrado)
     if r2 == 0:
         st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo com os filtros atuais.")
