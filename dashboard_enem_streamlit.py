@@ -262,7 +262,9 @@ def create_declaration_vs_score_scatter(df):
     }).round(2)
     
     stats.columns = ['Total Alunos', 'Média', 'Desvio Padrão', 'Municípios']
-    stats.index = ['Não Declarada', 'Declarada']
+    # Mapeia o índice booleano para nomes legíveis
+    idx_map = {False: 'Não Declarada', True: 'Declarada'}
+    stats.index = [idx_map.get(val, str(val)) for val in stats.index]
     
     # Cria figura com subplots
     fig = go.Figure()
@@ -299,7 +301,7 @@ def create_declaration_vs_score_scatter(df):
         annotations=[
             dict(
                 text=(
-                    f"Diferença: {abs(stats.loc['Declarada', 'Média'] - stats.loc['Não Declarada', 'Média']):.1f} pontos"
+                    f"Diferença: {abs(stats.get('Declarada', {}).get('Média', 0) - stats.get('Não Declarada', {}).get('Média', 0)):.1f} pontos"
                 ),
                 xref="paper", yref="paper",
                 x=0.5, y=1.05,
