@@ -40,53 +40,42 @@ escolaridade_map = {
     'G': 'G - Pós-Graduação', 'H': 'H - Não Sabe'
 }
 
-import streamlit as st
-import pandas as pd
-from sqlalchemy import create_engine
-from sqlalchemy.exc import SQLAlchemyError
-import plotly.express as px
-import plotly.graph_objects as go
-import logging
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.metrics import r2_score
-import numpy as np
-
-logging.basicConfig(level=logging.INFO)
-
-DB_CONFIG = {
-    'host': 'bigdata.dataiesb.com',
-    'database': 'iesb',
-    'port': 5432,
-    'user': 'data_iesb',
-    'password': 'iesb'
-}
-
-Q005_MAP = {
-    'A': 'Nenhuma Renda', 'B': 'Até R$ 1.320,00', 'C': 'De R$ 1.320,01 a R$ 1.980,00',
-    'D': 'De R$ 1.980,01 a R$ 2.640,00', 'E': 'De R$ 2.640,01 a R$ 3.300,00',
-    'F': 'De R$ 3.300,01 a R$ 3.960,00', 'G': 'De R$ 3.960,01 a R$ 5.280,00',
-    'H': 'De R$ 5.280,01 a R$ 6.600,00', 'I': 'De R$ 6.600,01 a R$ 7.920,00',
-    'J': 'De R$ 7.920,01 a R$ 9.240,00', 'K': 'De R$ 9.240,01 a R$ 10.560,00',
-    'L': 'De R$ 10.560,01 a R$ 11.880,00', 'M': 'De R$ 11.880,01 a R$ 13.200,00',
-    'N': 'De R$ 13.200,01 a R$ 15.840,00', 'O': 'De R$ 15.840,01 a R$ 19.800,00',
-    'P': 'Mais de R$ 19.800,00', 'Q': 'Não Declarado'
-}
-
-escolaridade_map = {
-    'A': 'A - Nenhuma/Incompleto', 'B': 'B - Fund. Completo',
-    'C': 'C - Médio Incompleto', 'D': 'D - Médio Completo',
-    'E': 'E - Superior Incompleto', 'F': 'F - Superior Completo',
-    'G': 'G - Pós-Graduação', 'H': 'H - Não Sabe'
-}
-
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024...")
-def load_data(sample_size=50000):
+def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
+    """Carrega uma amostra do banco com checagens e fallback automáticos.
+
+    Parâmetros
+    - sample_size: número de registros a carregar (padrão 50000)
+    - randomize: se True usa ORDER BY RANDOM() (pode ser lento em tabelas grandes)
+    - quick_check_rows: número de linhas para consultas de verificação rápidas em fallback
+
+    O objetivo desta versão é facilitar o diagnóstico quando a carga não ocorre — ela testa a conexão,
+    verifica existência das tabelas, tenta a query principal e tem um fallback para uma query mais simples.
+    """
+    connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
+    engine = None
     try:
-        connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
         engine = create_engine(connection_string, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute("SELECT 1")
+
+            def exists_table(table_name: str) -> bool:
+                q = ("SELECT to_regclass(%s)")
+                res = conn.execute(q, (table_name,)).scalar()
+                return res is not None
+
+            needed_tables = [
+                'ed_enem_2024_participantes',
+                'ed_enem_2024_resultados_amos_per',
+                'municipio'
+            ]
+            missing = [t for t in needed_tables if not exists_table(t)]
+            if missing:
+                st.error(f"Tabelas faltando no banco: {missing}. Verifique nomes/permissões.")
+                logging.error(f"Tabelas faltando: {missing}")
+                return pd.DataFrame()
+
+        order_clause = "ORDER BY RANDOM()" if randomize else ""
         query = f"""
             SELECT
                 p.nu_inscricao,
@@ -114,23 +103,42 @@ def load_data(sample_size=50000):
             WHERE p.q001 IS NOT NULL
               AND p.q002 IS NOT NULL
               AND p.q005 IS NOT NULL
-            ORDER BY RANDOM()
+            {order_clause}
             LIMIT {sample_size};
         """
+
         df = pd.read_sql(query, engine)
-        engine.dispose()
-        logging.info(f"Carga com LEFT JOIN de 3 tabelas e CAST: {len(df)} registros carregados.")
+        logging.info(f"Query principal executada com sucesso: {len(df)} registros carregados.")
         return df
+
     except SQLAlchemyError as e:
-        error_message = f"🚨 Erro SQL ao carregar dados. Verifique a sintaxe da QUERY e se as tabelas/colunas existem. Detalhes: {e}"
-        logging.error(error_message)
-        st.error(error_message)
-        return pd.DataFrame()
+        logging.error("Erro SQL na query principal: %s", e)
+        st.error("Erro SQL ao carregar dados (veja o log para detalhes). Tentando fallback rápido...")
+
+        try:
+            engine = create_engine(connection_string, pool_pre_ping=True) if engine is None else engine
+            fallback_query = f"SELECT * FROM ed_enem_2024_participantes LIMIT {quick_check_rows};"
+            df = pd.read_sql(fallback_query, engine)
+            logging.info(f"Fallback bem-sucedido: {len(df)} registros da tabela participantes carregados.")
+            st.warning("Fallback: carregados apenas dados da tabela participantes para diagnóstico.")
+            return df
+        except Exception as e2:
+            logging.exception("Fallback também falhou: %s", e2)
+            st.error(f"Fallback falhou. Detalhes: {e2}")
+            return pd.DataFrame()
+
     except Exception as e:
-        error_message = f"❌ Erro geral ao carregar dados. Verifique a conexão/credenciais. Detalhes: {e}"
-        logging.error(error_message)
-        st.error(error_message)
+        logging.exception("Erro inesperado ao carregar dados: %s", e)
+        st.error(f"Erro inesperado ao carregar dados. Detalhes: {e}")
         return pd.DataFrame()
+
+    finally:
+        if engine is not None:
+            try:
+                engine.dispose()
+            except Exception:
+                pass
+
 
 def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -460,5 +468,3 @@ with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
 st.caption("Dashboard ENEM 2024 - Desenvolvido em Python/Streamlit. Dados: PostgreSQL.")
-
-
