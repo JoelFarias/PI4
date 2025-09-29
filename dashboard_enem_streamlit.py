@@ -568,13 +568,6 @@ def main():
     media_matematica = df_filtrado['nota_mt_matematica'].mean()
     media_redacao = df_filtrado['nota_redacao'].mean()
 
-    # Contagem de regiões — duas métricas: seleção (após filtros) e total (todo o dataset carregado)
-    selection_regions = int(df_filtrado['regiao'].dropna().nunique())
-    total_regions = int(df['regiao'].dropna().nunique())
-    # listas resumidas (apenas para exibir quando pequenas)
-    sel_regions_list = sorted(df_filtrado['regiao'].dropna().unique().tolist())
-    total_regions_list = sorted(df['regiao'].dropna().unique().tolist())
-
     with col_met1:
         st.metric(label="Média Geral (5 Notas)", value=f"{media_geral:.2f} pts")
     with col_met2:
@@ -582,17 +575,7 @@ def main():
     with col_met3:
         st.metric(label="Média Redação", value=f"{media_redacao:.2f} pts")
     with col_met4:
-        # exibe sempre o total de regiões do dataset (atende ao seu pedido: "tem que ser todas")
-        st.metric(label="Regiões (total no dataset)", value=f"{total_regions}")
-        # mostra resumo das regiões selecionadas (apenas quando poucas) para não poluir a UI
-        if selection_regions == 0:
-            st.caption("Seleção atual: nenhuma região com dados disponíveis")
-        elif selection_regions == 1:
-            st.caption(f"Seleção atual: {sel_regions_list[0]}")
-        elif selection_regions <= 3:
-            st.caption("Seleção atual: " + ", ".join(sel_regions_list))
-        else:
-            st.caption(f"Seleção atual: {selection_regions} regiões (use o filtro 'Região' para detalhar)")
+        st.metric(label="Regiões na seleção", value=f"{df_filtrado['regiao'].nunique()}")
 
     st.markdown("---")
 
