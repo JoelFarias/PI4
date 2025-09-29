@@ -142,10 +142,64 @@ def load_data(sample_size=50000, randomize=False, quick_check_rows=1000):
 
 def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df['faixa_renda_legivel'] = df['faixa_renda'].map(Q005_MAP).fillna('Desconhecido')
-    df['sexo'] = df['sexo'].replace({'M': 'Masculino', 'F': 'Feminino'})
-    df['escolaridade_pai'] = df['escolaridade_pai'].replace(escolaridade_map)
-    df['escolaridade_mae'] = df['escolaridade_mae'].replace(escolaridade_map)
+    # Padroniza nomes de colunas quando a query de fallback trouxe os nomes originais
+    col_map = {}
+    if 'q005' in df.columns and 'faixa_renda' not in df.columns:
+        col_map['q005'] = 'faixa_renda'
+    if 'q001' in df.columns and 'escolaridade_pai' not in df.columns:
+        col_map['q001'] = 'escolaridade_pai'
+    if 'q002' in df.columns and 'escolaridade_mae' not in df.columns:
+        col_map['q002'] = 'escolaridade_mae'
+    if 'tp_sexo' in df.columns and 'sexo' not in df.columns:
+        col_map['tp_sexo'] = 'sexo'
+    if 'tp_cor_raca' in df.columns and 'cor_raca' not in df.columns:
+        col_map['tp_cor_raca'] = 'cor_raca'
+    if 'idade_calculada' in df.columns and 'idade' not in df.columns:
+        col_map['idade_calculada'] = 'idade'
+    if 'sg_uf_prova' in df.columns and 'uf' not in df.columns:
+        col_map['sg_uf_prova'] = 'uf'
+    if 'regiao_nome_prova' in df.columns and 'regiao' not in df.columns:
+        col_map['regiao_nome_prova'] = 'regiao'
+    if col_map:
+        df.rename(columns=col_map, inplace=True)
+
+    # Garante que colunas essenciais existam (preenche com NaN/Desconhecido quando ausentes)
+    essential_cols = ['faixa_renda', 'sexo', 'escolaridade_pai', 'escolaridade_mae']
+    for c in essential_cols:
+        if c not in df.columns:
+            df[c] = np.nan
+
+    df['faixa_renda_legivel'] = df['faixa_renda'].map(Q005_MAP) if 'faixa_renda' in df.columns else pd.Series(['Desconhecido'] * len(df))
+    df['faixa_renda_legivel'] = df['faixa_renda_legivel'].fillna('Desconhecido')
+
+    if 'sexo' in df.columns:
+        df['sexo'] = df['sexo'].replace({'M': 'Masculino', 'F': 'Feminino'})
+        df['sexo'] = df['sexo'].fillna('Desconhecido')
+    else:
+        df['sexo'] = 'Desconhecido'
+
+    if 'escolaridade_pai' in df.columns:
+        df['escolaridade_pai'] = df['escolaridade_pai'].replace(escolaridade_map)
+        df['escolaridade_pai'] = df['escolaridade_pai'].fillna('Desconhecido')
+    else:
+        df['escolaridade_pai'] = 'Desconhecido'
+
+    if 'escolaridade_mae' in df.columns:
+        df['escolaridade_mae'] = df['escolaridade_mae'].replace(escolaridade_map)
+        df['escolaridade_mae'] = df['escolaridade_mae'].fillna('Desconhecido')
+    else:
+        df['escolaridade_mae'] = 'Desconhecido'
+
+    # Garante que colunas de notas existem para evitar KeyError nas funções de plot
+    notes_cols = [
+        'nota_cn_ciencias_da_natureza', 'nota_ch_ciencias_humanas',
+        'nota_lc_linguagens_e_codigos', 'nota_mt_matematica', 'nota_redacao',
+        'nota_media_5_notas'
+    ]
+    for nc in notes_cols:
+        if nc not in df.columns:
+            df[nc] = np.nan
+
     return df
 
 
