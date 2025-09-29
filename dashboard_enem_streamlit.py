@@ -246,22 +246,61 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 # -------------------- Novas visualizações para casos com muitos 'Desconhecido' --------------------
 
-def create_declaration_vs_score_scatter(df, min_records=10, top_n=30):
-    # Para municípios com pelo menos min_records, plota taxa de declaração (x) vs nota média (y)
+def create_declaration_vs_score_scatter(df, min_records=10):
+    """
+    Cria um gráfico de barras horizontal mostrando top municípios e suas taxas de declaração vs notas.
+    """
     grp = df.groupby('nome_municipio').agg(
         declarados=('faixa_renda_legivel', lambda s: (s != 'Desconhecido').sum()),
         total=('faixa_renda_legivel', 'count'),
         nota_media=('nota_media_5_notas', 'mean')
     ).reset_index()
+    
     grp['tx_declaracao'] = grp['declarados'] / grp['total']
     grp = grp[grp['total'] >= min_records]
+    
     if grp.empty:
-        return px.bar(title='Nenhum município com registros suficientes para análise de declaração de renda')
-    top = grp.sort_values('total', ascending=False).head(top_n)
-    fig = px.scatter(top, x='tx_declaracao', y='nota_media', size='total', hover_name='nome_municipio',
-                     title=f'Taxa de declaração de renda vs Nota Média (municípios com ≥{min_records} registros)')
-    fig.update_xaxes(tickformat='.0%')
-    fig.update_layout(margin=dict(t=40))
+        return px.bar(title='Nenhum município com registros suficientes para análise')
+        
+    # Pega top 15 por total de registros
+    top = grp.sort_values('total', ascending=True).tail(15)
+    
+    # Cria figura com barras duplas
+    fig = go.Figure()
+    
+    # Adiciona taxa de declaração
+    fig.add_trace(go.Bar(
+        x=top['tx_declaracao'],
+        y=top['nome_municipio'],
+        name='Taxa Declaração',
+        orientation='h',
+        marker_color='lightblue',
+        customdata=top[['total']],
+        hovertemplate="Município: %{y}<br>Taxa Declaração: %{x:.1%}<br>Total: %{customdata[0]}<extra></extra>"
+    ))
+    
+    # Adiciona nota média normalizada para mesma escala
+    nota_norm = (top['nota_media'] - top['nota_media'].min()) / (top['nota_media'].max() - top['nota_media'].min())
+    fig.add_trace(go.Bar(
+        x=nota_norm,
+        y=top['nome_municipio'],
+        name='Nota Média (norm.)',
+        orientation='h',
+        marker_color='coral',
+        customdata=top[['nota_media']],
+        hovertemplate="Município: %{y}<br>Nota Média: %{customdata[0]:.1f}<extra></extra>"
+    ))
+
+    fig.update_layout(
+        title='Taxa de Declaração de Renda vs Nota Média por Município',
+        barmode='group',
+        xaxis_title='Taxa de Declaração / Nota Normalizada',
+        yaxis_title='Município',
+        height=500,
+        margin=dict(l=20, r=20, t=40, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
     return fig
 
 
@@ -339,39 +378,70 @@ def create_notes_box_plot(df):
 
 
 def create_income_vs_math_box_plot(df):
-    df_plot = df.copy()
-    df_plot['faixa_renda_legivel'] = df_plot['faixa_renda_legivel'].fillna('Desconhecido')
-    df_no_unknown = df_plot[df_plot['faixa_renda_legivel'] != 'Desconhecido']
-
-    if df_no_unknown['faixa_renda_legivel'].nunique() < 2:
-        # substitui por gráfico de municípios: taxa de declaração vs média de matemática
-        grp = df_plot.groupby('nome_municipio').agg(
-            declarados=('faixa_renda_legivel', lambda s: (s != 'Desconhecido').sum()),
-            total=('faixa_renda_legivel', 'count'),
-            nota_mt_media=('nota_mt_matematica', 'mean')
-        ).reset_index()
-        grp['tx_declaracao'] = grp['declarados'] / grp['total']
-        top = grp[grp['total'] >= 10].sort_values('tx_declaracao', ascending=False).head(20)
-        if top.empty:
-            return px.box(df_plot, y='nota_mt_matematica', points='all', title='Nota de Matemática (dados de renda indisponíveis ou agregados)')
-        fig = px.scatter(top, x='tx_declaracao', y='nota_mt_media', size='total', hover_name='nome_municipio',
-                         title='Taxa de declaração de renda por município vs Média Matemática (municípios com >=10 registros)')
-        fig.update_xaxes(tickformat='.0%')
-        fig.update_layout(margin=dict(t=40))
-        return fig
-
-    ordered_categories = [Q005_MAP[k] for k in Q005_MAP.keys() if Q005_MAP[k] in df_no_unknown['faixa_renda_legivel'].tolist()]
-    fig = px.box(
-        df_no_unknown,
-        x='faixa_renda_legivel',
-        y='nota_mt_matematica',
-        title='Impacto da Renda na Nota de Matemática (Box Plot)',
-        labels={'faixa_renda_legivel': 'Faixa de Renda', 'nota_mt_matematica': 'Nota Matemática'},
-        points='all',
-        category_orders={'faixa_renda_legivel': ordered_categories}
+    stats = df.groupby('faixa_renda_legivel').agg({
+        'nota_mt_matematica': ['mean', 'count', 'std']
+    }).reset_index()
+    
+    stats.columns = ['faixa_renda', 'media', 'quantidade', 'desvio']
+    
+    # Remove 'Desconhecido' e ordena por média
+    stats = stats[stats['faixa_renda'] != 'Desconhecido']
+    stats = stats.sort_values('media', ascending=True)
+    
+    if len(stats) < 2:
+        return px.bar(title='Dados de renda insuficientes para análise')
+        
+    # Cria gráfico de bolhas
+    fig = go.Figure()
+    
+    # Adiciona bolhas
+    fig.add_trace(go.Scatter(
+        x=stats['media'],
+        y=np.arange(len(stats)), # Posição vertical igualmente espaçada
+        mode='markers',
+        marker=dict(
+            size=stats['quantidade']/stats['quantidade'].max() * 50, # Tamanho proporcional à quantidade
+            color=stats['desvio'], # Cor baseada no desvio padrão
+            colorscale='Viridis',
+            showscale=True,
+            colorbar=dict(title='Desvio Padrão')
+        ),
+        text=stats['faixa_renda'],
+        hovertemplate="<br>".join([
+            "Faixa: %{text}",
+            "Média: %{x:.1f}",
+            "Quantidade: %{customdata[0]}",
+            "Desvio: %{customdata[1]:.1f}"
+        ]),
+        customdata=np.stack((stats['quantidade'], stats['desvio']), axis=1)
+    ))
+    
+    # Configurações do layout
+    fig.update_layout(
+        title='Média de Matemática por Faixa de Renda',
+        xaxis_title='Nota Média em Matemática',
+        yaxis=dict(
+            showticklabels=False,
+            showgrid=False
+        ),
+        height=max(400, len(stats)*30),
+        showlegend=False,
+        margin=dict(l=20, r=20, t=40, b=20)
     )
-    fig.update_xaxes(tickangle=45, tickfont=dict(size=10))
-    fig.update_layout(margin=dict(t=50, b=120))
+    
+    # Adiciona labels das faixas de renda
+    for i, faixa in enumerate(stats['faixa_renda']):
+        fig.add_annotation(
+            x=0,
+            y=i,
+            text=short_label(faixa, 25),
+            xanchor='right',
+            yanchor='middle',
+            showarrow=False,
+            xshift=-10,
+            align='right'
+        )
+    
     return fig
 
 
@@ -547,7 +617,7 @@ def main():
         st.stop()
 
     # Métricas rápidas (sem exibir contagens totais explícitas que você pediu para remover)
-    st.header("Análise Descritiva Rápida")
+    st.header("Análise Descritiva")
     col_met1, col_met2, col_met3, col_met4 = st.columns(4)
 
     media_geral = df_filtrado['nota_media_5_notas'].mean()
@@ -582,12 +652,9 @@ def main():
 
         col3, col4 = st.columns(2)
         with col3:
-            # aplica filtro opcional para renda declarada
             fig3 = create_income_bar_chart(df_filtrado)
             pct_unknown = (df_filtrado['faixa_renda_legivel'].fillna('Desconhecido') == 'Desconhecido').mean()
             if fig3 is None or pct_unknown > 0.7:
-                st.warning("Mais de 70% dos registros têm faixa de renda 'Desconhecido'. Mostrando alternativas relevantes.")
-                # novo tema: taxa de declaração vs nota média por município
                 fig_alt = create_declaration_vs_score_scatter(df_filtrado)
                 st.plotly_chart(fig_alt, use_container_width=True)
             else:
@@ -600,10 +667,7 @@ def main():
 
         fig_parent_notes = create_parent_education_vs_mean_note(df_filtrado)
         st.plotly_chart(fig_parent_notes, use_container_width=True)
-
         st.markdown("---")
-
-        # mostrar apenas o boxplot de renda vs matemática em largura completa (removido gráfico lateral confuso)
         st.subheader('Impacto da Renda na Nota de Matemática')
         fig5 = create_income_vs_math_box_plot(df_filtrado)
         st.plotly_chart(fig5, use_container_width=True)
