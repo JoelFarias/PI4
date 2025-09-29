@@ -352,27 +352,6 @@ def create_notes_box_plot(df):
     return fig
 
 
-def create_income_vs_math_box_plot(df):
-    # Create simple boxplot
-    fig = px.box(
-        df, 
-        x='faixa_renda_legivel',
-        y='nota_mt_matematica',
-        title='Notas de Matemática por Faixa de Renda'
-    )
-    
-    # Update layout
-    fig.update_layout(
-        xaxis_title='Faixa de Renda',
-        yaxis_title='Nota em Matemática',
-        xaxis_tickangle=-45,
-        height=500,
-        margin=dict(l=20, r=20, t=40, b=120)
-    )
-    
-    return fig
-
-
 def short_label(s: str, maxlen=18) -> str:
     if pd.isna(s):
         return ''
@@ -593,19 +572,17 @@ def main():
         fig_parent_notes = create_parent_education_vs_mean_note(df_filtrado)
         st.plotly_chart(fig_parent_notes, use_container_width=True)
         st.markdown("---")
-        fig5 = create_income_vs_math_box_plot(df_filtrado)
-        st.plotly_chart(fig5, use_container_width=True, key="income_vs_math_boxplot")
         st.caption('Nota: quando nota individual não estiver disponível, usamos a média municipal como proxy/contexto. O gráfico mostrado depende da disponibilidade de faixas de renda declaradas.')
 
         # agora a distribuição por sexo e o boxplot de matemática lado a lado
-        st.subheader('Distribuição por Sexo e Notas de Matemática')
-        col_sex, col_math = st.columns(2)
+        st.subheader('Distribuição por Sexo e Nota Média')
+        col_sex, col_mean = st.columns(2)
         with col_sex:
             fig6 = create_pie_chart(df_filtrado, "sexo", "Distribuição por Sexo", textfont_size=12)
             st.plotly_chart(fig6, use_container_width=True)
-        with col_math:
-            fig_math_box = create_income_vs_math_box_plot(df_filtrado)
-            st.plotly_chart(fig_math_box, use_container_width=True)
+        with col_mean:
+            fig_mean_box = create_mean_note_vs_income_box_plot(df_filtrado)
+            st.plotly_chart(fig_mean_box, use_container_width=True)
 
         with st.expander("🔍 Detalhamento das Estatísticas"):
             st.subheader("Estatísticas Descritivas das Notas")
