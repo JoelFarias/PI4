@@ -10,6 +10,7 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import r2_score
 import numpy as np
+from sklearn.linear_model import LinearRegression
 
 # -------------------- Configurações --------------------
 st.set_page_config(page_title="ENEM 2024 - Dashboard (Agregado Municipal)", layout="wide")
@@ -248,93 +249,134 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_declaration_vs_score_scatter(df):
     """
-    Cria um gráfico de dispersão relacionando % de declaração vs nota média,
-    com cores indicando volume de alunos e linhas de referência.
+    Cria um gráfico de dispersão melhorado que relaciona declaração de renda e desempenho,
+    com tratamento para outliers e padrões problemáticos.
     """
     # Agrupa por município e calcula métricas
     grp = df.groupby('nome_municipio').agg(
         declarados=('faixa_renda_legivel', lambda x: (x != 'Desconhecido').sum()),
         total=('faixa_renda_legivel', 'count'),
-        nota_media=('nota_media_5_notas', 'mean')
+        nota_media=('nota_media_5_notas', 'mean'),
+        nota_mediana=('nota_media_5_notas', 'median'),
+        desvio=('nota_media_5_notas', 'std')
     ).reset_index()
     
-    # Calcula percentual de declaração e remove outliers extremos
+    # Calcula métricas derivadas
     grp['pct_declarado'] = (grp['declarados'] / grp['total'] * 100).round(1)
+    grp['coef_var'] = (grp['desvio'] / grp['nota_media'] * 100).fillna(0)
     
-    # Remove outliers extremos usando IQR
-    Q1 = grp['nota_media'].quantile(0.25)
-    Q3 = grp['nota_media'].quantile(0.75)
-    IQR = Q3 - Q1
+    # Remove municípios com poucos alunos ou variação muito baixa
+    MIN_ALUNOS = 10
     grp = grp[
-        (grp['nota_media'] >= Q1 - 1.5 * IQR) & 
-        (grp['nota_media'] <= Q3 + 1.5 * IQR)
+        (grp['total'] >= MIN_ALUNOS) & 
+        (grp['coef_var'] > 0)  # remove municípios com notas todas iguais
     ]
     
-    # Calcula estatísticas para referência
-    media_geral = grp['nota_media'].mean()
-    mediana_geral = grp['nota_media'].median()
+    # Remove outliers usando Z-score para notas
+    z_scores = np.abs((grp['nota_media'] - grp['nota_media'].mean()) / grp['nota_media'].std())
+    grp = grp[z_scores < 3]
+    
+    # Se ainda tiver dados problemáticos, tenta agrupar por faixas
+    if len(grp) > 0 and grp['pct_declarado'].nunique() < 5:
+        st.warning("⚠️ Dados muito concentrados. Mostrando visualização alternativa.")
+        
+        # Cria faixas de declaração
+        grp['faixa_declaracao'] = pd.qcut(
+            grp['pct_declarado'], 
+            q=5, 
+            labels=['0-20%', '20-40%', '40-60%', '60-80%', '80-100%']
+        )
+        
+        # Cria boxplot
+        fig = px.box(
+            grp,
+            x='faixa_declaracao',
+            y='nota_media',
+            points='all',
+            title='Distribuição de Notas por Faixa de Declaração de Renda',
+            labels={
+                'faixa_declaracao': 'Faixa de Declaração de Renda',
+                'nota_media': 'Nota Média do Município'
+            }
+        )
+        
+        fig.update_layout(
+            height=450,
+            showlegend=False,
+            annotations=[dict(
+                text="* Cada ponto representa um município",
+                xref="paper", yref="paper",
+                x=0, y=1.05,
+                showarrow=False,
+                font=dict(size=10)
+            )]
+        )
+        
+        return fig
     
     # Cria gráfico de dispersão com cores por volume
     fig = px.scatter(
         grp,
         x='pct_declarado',
         y='nota_media',
-        size='total',  # Tamanho dos pontos baseado no total de alunos
-        color='total',  # Cor baseada no total de alunos
-        color_continuous_scale='Viridis',
+        size='total',
+        color='coef_var',
+        color_continuous_scale='RdYlBu_r',
         hover_data={
             'nome_municipio': True,
             'total': True,
             'nota_media': ':.2f',
+            'coef_var': ':.1f',
             'pct_declarado': ':.1f'
         },
         labels={
             'pct_declarado': '% de Rendas Declaradas',
             'nota_media': 'Nota Média',
-            'total': 'Total de Alunos'
+            'total': 'Quantidade de Alunos',
+            'coef_var': 'Coeficiente de Variação (%)'
         },
         title='Relação entre Declaração de Renda e Desempenho por Município'
     )
     
-    # Adiciona linhas de referência
-    fig.add_hline(
-        y=media_geral,
-        line_dash="dash",
-        line_color="red",
-        annotation_text=f"Média: {media_geral:.1f}",
-        annotation_position="bottom right"
-    )
-    fig.add_hline(
-        y=mediana_geral,
-        line_dash="dot",
-        line_color="green",
-        annotation_text=f"Mediana: {mediana_geral:.1f}",
-        annotation_position="bottom right"
-    )
+    # Adiciona linha de tendência via regressão linear
+    X = grp['pct_declarado'].values.reshape(-1, 1)
+    y = grp['nota_media'].values
+    reg = LinearRegression().fit(X, y)
+    grp['pred'] = reg.predict(X)
+    
+    fig.add_traces(go.Scatter(
+        x=grp['pct_declarado'],
+        y=grp['pred'],
+        mode='lines',
+        line=dict(color='red', dash='dash'),
+        name='Tendência',
+        showlegend=True
+    ))
     
     # Ajusta layout
     fig.update_layout(
         height=450,
-        margin=dict(t=50, b=50),
         hovermode='closest',
-        coloraxis_colorbar_title='Total de Alunos',
-        annotations=[
-            dict(
-                text=(
-                    "Cada ponto representa um município.<br>"
-                    "Tamanho e cor indicam quantidade de alunos.<br>"
-                    "Linhas: média (---) e mediana (....)"
-                ),
-                xref="paper", yref="paper",
-                x=0, y=1.08,
-                showarrow=False,
-                font=dict(size=10)
-            )
-        ]
+        coloraxis_colorbar_title='Variação (%)',
+        annotations=[dict(
+            text=(
+                "Cada ponto representa um município.<br>"
+                "Tamanho: quantidade de alunos<br>"
+                "Cor: variação das notas<br>"
+                "Linha tracejada: tendência"
+            ),
+            xref="paper", yref="paper",
+            x=0, y=1.08,
+            showarrow=False,
+            font=dict(size=10)
+        )]
     )
     
-    # Ajusta escalas
-    fig.update_traces(marker=dict(sizeref=2.*max(grp['total'])/(40.**2)))
+    # Ajusta escalas e referências
+    fig.update_traces(
+        marker=dict(sizeref=2.*max(grp['total'])/(40.**2)),
+        selector=dict(mode='markers')
+    )
     fig.update_xaxes(range=[0, 100])
     
     return fig
