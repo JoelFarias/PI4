@@ -366,7 +366,7 @@ def create_parent_education_vs_mean_note(df):
             cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
             if np.isnan(mean_val):
                 # Use uma quebra de linha escapada (
-) dentro do f-string para evitar erro de sintaxe
+
                 row.append(f"Média: n/a
 Contagem: {cnt}")
             else:
