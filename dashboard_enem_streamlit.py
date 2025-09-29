@@ -248,9 +248,9 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 # -------------------- Novas visualizações para casos com muitos 'Desconhecido' --------------------
 
 def create_declaration_vs_score_scatter(df):
-
-    # Se não houver dados suficientes para distribuição de renda, mostra distribuição de idades
+    # Tenta criar gráfico de barras de renda declarada
     fig = create_income_bar_chart(df)
+    # Se não houver dados suficientes, mostra distribuição de idades
     if fig is None or (hasattr(fig, "data") and len(fig.data) == 0):
         fig = px.histogram(
             df,
@@ -262,6 +262,11 @@ def create_declaration_vs_score_scatter(df):
         fig.update_layout(
             yaxis_title="Quantidade",
             xaxis_title="Idade",
+            height=400,
+            margin=dict(t=50, b=50)
+        )
+    else:
+        fig.update_layout(
             height=400,
             margin=dict(t=50, b=50)
         )
