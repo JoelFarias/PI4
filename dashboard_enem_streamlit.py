@@ -274,8 +274,12 @@ def create_declaration_vs_score_scatter(df):
         title='Relação entre Declaração de Renda e Desempenho por Município'
     )
     
-    # Adiciona linha de tendência
-    fig.add_traces(px.scatter(grp, x='pct_declarado', y='nota_media', trendline="ols").data)
+    # Tenta adicionar linha de tendência apenas se statsmodels estiver disponível
+    try:
+        import statsmodels.api as sm
+        fig.add_traces(px.scatter(grp, x='pct_declarado', y='nota_media', trendline="ols").data)
+    except ImportError:
+        st.warning("📊 Nota: linha de tendência não disponível (statsmodels não instalado)")
     
     # Ajusta layout
     fig.update_layout(
