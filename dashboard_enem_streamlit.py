@@ -424,10 +424,13 @@ def create_parent_education_vs_mean_note(df):
             mean_val = pivot_mean.loc[y, x]
             cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
             if np.isnan(mean_val):
-                # usa \n escapado dentro do f-string para evitar SyntaxError
-                row.append(f"Média: n/a\nContagem: {cnt}")
+                # usa 
+ escapado dentro do f-string para evitar SyntaxError
+                row.append(f"Média: n/a
+Contagem: {cnt}")
             else:
-                row.append(f"Média: {mean_val:.2f}\nContagem: {cnt}")
+                row.append(f"Média: {mean_val:.2f}
+Contagem: {cnt}")
         hover_text.append(row)
 
     fig.data[0].hovertemplate = '%{y}<br>%{x}<br>%{customdata}<extra></extra>'
@@ -523,20 +526,13 @@ def main():
 
     # opção no sidebar: mostrar apenas renda declarada para o gráfico de renda
     st.sidebar.header("Filtros do Dashboard")
-    show_only_declared_renda = st.sidebar.checkbox("Mostrar apenas registros com renda declarada (Q005)", value=False)
 
     regioes = ["Todas"] + sorted(df["regiao"].dropna().unique())
     ufs = ["Todas"] + sorted(df["uf"].dropna().unique())
     generos = ["Todos"] + sorted(df["sexo"].dropna().unique())
-    rendas_unicas = sorted(df["faixa_renda"].dropna().unique(), key=lambda x: list(Q005_MAP.keys()).index(x) if x in Q005_MAP else 99)
-    rendas_legiveis = [Q005_MAP.get(r, r) for r in rendas_unicas]
-    rendas_map_rev = {v: k for k, v in Q005_MAP.items()}
-
     regiao_sel = st.sidebar.selectbox("Região", regioes)
     uf_sel = st.sidebar.selectbox("UF", ufs)
     genero_sel = st.sidebar.selectbox("Sexo", generos)
-    renda_sel_legivel = st.sidebar.selectbox("Faixa de Renda", ["Todas"] + rendas_legiveis)
-
     # Aplica filtros
     df_filtrado = df.copy()
     if regiao_sel != "Todas":
@@ -545,11 +541,6 @@ def main():
         df_filtrado = df_filtrado[df_filtrado["uf"] == uf_sel]
     if genero_sel != "Todos":
         df_filtrado = df_filtrado[df_filtrado["sexo"] == genero_sel]
-    if renda_sel_legivel != "Todas":
-        renda_sel_codigo = rendas_map_rev.get(renda_sel_legivel)
-        if renda_sel_codigo:
-            df_filtrado = df_filtrado[df_filtrado["faixa_renda"] == renda_sel_codigo]
-
     # Mantém apenas registros com nota válida
     df_filtrado = df_filtrado.dropna(subset=['nota_media_5_notas'])
     df_filtrado = df_filtrado[df_filtrado['nota_media_5_notas'] > 0]
@@ -597,7 +588,7 @@ def main():
         col3, col4 = st.columns(2)
         with col3:
             # aplica filtro opcional para renda declarada
-            fig3 = create_income_bar_chart(df_filtrado, only_declared=show_only_declared_renda)
+            fig3 = create_income_bar_chart(df_filtrado)
             pct_unknown = (df_filtrado['faixa_renda_legivel'].fillna('Desconhecido') == 'Desconhecido').mean()
             if fig3 is None or pct_unknown > 0.7:
                 st.warning("Mais de 70% dos registros têm faixa de renda 'Desconhecido'. Mostrando alternativas relevantes.")
