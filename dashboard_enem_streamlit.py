@@ -380,7 +380,34 @@ st.title("📊 ENEM 2024 - Dashboard Socioeconômico")
 st.markdown("---")
 
 df_raw = load_data()
+with st.expander("🧪 Diagnóstico rápido - por que zero notas?"):
+    st.write("Preview df_raw")
+    st.dataframe(df_raw.head(6))
 
+    st.write("Colunas carregadas e contagens not-null")
+    cols_info = pd.DataFrame({
+        "col": df_raw.columns,
+        "notnull": [int(df_raw[c].notna().sum()) for c in df_raw.columns]
+    })
+    st.dataframe(cols_info.sort_values("notnull", ascending=False).head(40))
+
+    notes = ['nota_cn_ciencias_da_natureza','nota_ch_ciencias_humanas',
+             'nota_lc_linguagens_e_codigos','nota_mt_matematica',
+             'nota_redacao','nota_media_5_notas']
+    st.write("Contagem NÃO-NULAS nas colunas de nota (amostra carregada):")
+    st.table({c: int(df_raw[c].notna().sum()) if c in df_raw.columns else 0 for c in notes})
+
+    st.write("Tentativa direta: carregar pequenas amostras da tabela de resultados (para checar existência de notas)")
+    try:
+        from sqlalchemy import create_engine
+        engine_test = create_engine(f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}", pool_pre_ping=True)
+        r_sample = pd.read_sql("SELECT nu_sequencial, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT 500;", engine_test)
+        st.write("Resultados (sample 500) - not-null counts:")
+        st.table(r_sample.notna().sum().to_frame("not_null_count"))
+        st.dataframe(r_sample.head(10))
+        engine_test.dispose()
+    except Exception as e:
+        st.error(f"Erro ao tentar consultar tabela resultados: {e}")
 if df_raw.empty:
     st.error("⚠️ O DataFrame está vazio. Verifique a origem dos dados e a consulta SQL.")
     st.stop()
@@ -563,3 +590,4 @@ with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
 st.caption("Dashboard ENEM 2024 - Desenvolvido em Python/Streamlit. Dados: PostgreSQL.")
+
