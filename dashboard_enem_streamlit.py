@@ -41,7 +41,7 @@ escolaridade_map = {
 
 # -------------------- Função de carregamento (agregado municipal, sem LIMIT por padrão) --------------------
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024 (agregado municipal)...")
-def load_data(sample_size=100000, randomize=False, quick_check_rows=2000):
+def load_data(sample_size=500000, randomize=False, quick_check_rows=2000):
     connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     engine = None
     try:
@@ -365,6 +365,8 @@ def create_parent_education_vs_mean_note(df):
             mean_val = pivot_mean.loc[y, x]
             cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
             if np.isnan(mean_val):
+                # Use uma quebra de linha escapada (
+) dentro do f-string para evitar erro de sintaxe
                 row.append(f"Média: n/a
 Contagem: {cnt}")
             else:
@@ -625,4 +627,3 @@ with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
 st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
-
