@@ -11,7 +11,7 @@ from sklearn.metrics import r2_score
 import numpy as np
 
 # -------------------- Configurações --------------------
-st.set_page_config(page_title="ENEM 2024 - Dashboard", layout="wide")
+st.set_page_config(page_title="ENEM 2024 - Dashboard (Agregado Municipal)", layout="wide")
 
 DB_CONFIG = {
     'host': 'bigdata.dataiesb.com',
@@ -41,7 +41,7 @@ escolaridade_map = {
 
 # -------------------- Função de carregamento (agregado municipal, sem LIMIT por padrão) --------------------
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024 (agregado municipal)...")
-def load_data(sample_size=None, randomize=False, quick_check_rows=2000):
+def load_data(sample_size=500000, randomize=False, quick_check_rows=2000):
     connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     engine = None
     try:
@@ -60,6 +60,12 @@ def load_data(sample_size=None, randomize=False, quick_check_rows=2000):
             return pd.DataFrame()
 
         order_clause = "ORDER BY RANDOM()" if randomize else ""
+        # aplica limite máximo para proteger o servidor (cap em 500.000)
+        if sample_size is not None:
+            sample_size = int(min(sample_size, 500000))
+            limit_clause = f"LIMIT {sample_size}"
+        else:
+            limit_clause = ""
         limit_clause = f"LIMIT {sample_size}" if sample_size is not None else ""
 
         # Consulta: traz participantes e as médias agregadas de resultados por município
@@ -359,9 +365,11 @@ def create_parent_education_vs_mean_note(df):
             mean_val = pivot_mean.loc[y, x]
             cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
             if np.isnan(mean_val):
-                row.append(f"Média: n/a\nContagem: {cnt}")
+                row.append(f"Média: n/a
+Contagem: {cnt}")
             else:
-                row.append(f"Média: {mean_val:.2f}\nContagem: {cnt}")
+                row.append(f"Média: {mean_val:.2f}
+Contagem: {cnt}")
         hover_text.append(row)
 
     fig.data[0].hovertemplate = '%{y}<br>%{x}<br>%{customdata}<extra></extra>'
@@ -587,7 +595,9 @@ with tab1:
 
 with tab2:
     st.subheader("🔬 Análise Preditiva: Impacto Socioeconômico na Nota Média")
-    st.markdown("O modelo Random Forest Regressor foi treinado para prever a Nota Média usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.\n\nATENÇÃO: quando a nota individual do participante não existir, utilizamos a média municipal como proxy/contexto (é uma aproximação).")
+    st.markdown("O modelo Random Forest Regressor foi treinado para prever a Nota Média usando Renda, Escolaridade dos Pais, Cor/Raça e Sexo.
+
+ATENÇÃO: quando a nota individual do participante não existir, utilizamos a média municipal como proxy/contexto (é uma aproximação).")
     r2, importance_df = perform_predictive_analysis(df_filtrado)
     if r2 == 0:
         st.warning("⚠️ Dados insuficientes (menos de 100 registros) para treinar o modelo preditivo com os filtros atuais.")
@@ -615,4 +625,3 @@ with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
 st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
-
