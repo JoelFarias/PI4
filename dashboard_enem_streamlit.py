@@ -41,7 +41,7 @@ escolaridade_map = {
 
 # -------------------- Função de carregamento (uso: agregação municipal) --------------------
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024 (agregado municipal)...")
-def load_data(sample_size=50000, randomize=False, quick_check_rows=2000):
+def load_data(sample_size=100000, randomize=False, quick_check_rows=2000):
     connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     engine = None
     try:
@@ -61,7 +61,6 @@ def load_data(sample_size=50000, randomize=False, quick_check_rows=2000):
 
         order_clause = "ORDER BY RANDOM()" if randomize else ""
 
-        # Consulta: traz participantes e as médias agregadas de resultados por município
         query = f"""
             SELECT
                 p.nu_inscricao,
@@ -550,3 +549,4 @@ with st.expander("📄 Ver Dados Brutos Filtrados"):
     st.dataframe(df_filtrado, use_container_width=True)
 
 st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
+
