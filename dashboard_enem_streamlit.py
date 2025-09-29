@@ -250,8 +250,12 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 def create_declaration_vs_score_scatter(df):
     """
     Cria um gráfico de dispersão melhorado que relaciona declaração de renda e desempenho,
-    com tratamento para outliers e padrões problemáticos.
+    com tratamento para dados insuficientes/problemáticos.
     """
+    # Verifica se há dados suficientes
+    if len(df) < 10:
+        return px.scatter(title="Dados insuficientes para análise")
+
     # Agrupa por município e calcula métricas
     grp = df.groupby('nome_municipio').agg(
         declarados=('faixa_renda_legivel', lambda x: (x != 'Desconhecido').sum()),
@@ -272,22 +276,33 @@ def create_declaration_vs_score_scatter(df):
         (grp['coef_var'] > 0)  # remove municípios com notas todas iguais
     ]
     
+    # Verifica se ainda há dados após filtragem
+    if len(grp) < 5:
+        return px.scatter(
+            title="Dados insuficientes após filtragem. Necessário mais municípios com dados válidos."
+        )
+    
     # Remove outliers usando Z-score para notas
     z_scores = np.abs((grp['nota_media'] - grp['nota_media'].mean()) / grp['nota_media'].std())
     grp = grp[z_scores < 3]
     
-    # Se ainda tiver dados problemáticos, tenta agrupar por faixas
-    if len(grp) > 0 and grp['pct_declarado'].nunique() < 5:
-        st.warning("⚠️ Dados muito concentrados. Mostrando visualização alternativa.")
+    # Se tiver poucos pontos únicos de declaração, usa visualização alternativa
+    if grp['pct_declarado'].nunique() < 5:
+        try:
+            # Tenta criar faixas de declaração
+            grp['faixa_declaracao'] = pd.cut(
+                grp['pct_declarado'],
+                bins=5,
+                labels=['0-20%', '20-40%', '40-60%', '60-80%', '80-100%']
+            )
+        except ValueError:
+            # Se falhar em criar faixas, usa quartis
+            grp['faixa_declaracao'] = pd.qcut(
+                grp['pct_declarado'],
+                q=min(4, len(grp.pct_declarado.unique())),
+                duplicates='drop'
+            )
         
-        # Cria faixas de declaração
-        grp['faixa_declaracao'] = pd.qcut(
-            grp['pct_declarado'], 
-            q=5, 
-            labels=['0-20%', '20-40%', '40-60%', '60-80%', '80-100%']
-        )
-        
-        # Cria boxplot
         fig = px.box(
             grp,
             x='faixa_declaracao',
@@ -338,20 +353,24 @@ def create_declaration_vs_score_scatter(df):
         title='Relação entre Declaração de Renda e Desempenho por Município'
     )
     
-    # Adiciona linha de tendência via regressão linear
-    X = grp['pct_declarado'].values.reshape(-1, 1)
-    y = grp['nota_media'].values
-    reg = LinearRegression().fit(X, y)
-    grp['pred'] = reg.predict(X)
-    
-    fig.add_traces(go.Scatter(
-        x=grp['pct_declarado'],
-        y=grp['pred'],
-        mode='lines',
-        line=dict(color='red', dash='dash'),
-        name='Tendência',
-        showlegend=True
-    ))
+    # Tenta adicionar linha de tendência apenas se houver dados suficientes
+    if len(grp) >= 3:
+        try:
+            X = grp['pct_declarado'].values.reshape(-1, 1)
+            y = grp['nota_media'].values
+            reg = LinearRegression().fit(X, y)
+            grp['pred'] = reg.predict(X)
+            
+            fig.add_traces(go.Scatter(
+                x=grp['pct_declarado'],
+                y=grp['pred'],
+                mode='lines',
+                line=dict(color='red', dash='dash'),
+                name='Tendência',
+                showlegend=True
+            ))
+        except Exception as e:
+            st.warning(f"Não foi possível calcular linha de tendência: {str(e)}")
     
     # Ajusta layout
     fig.update_layout(
@@ -363,7 +382,7 @@ def create_declaration_vs_score_scatter(df):
                 "Cada ponto representa um município.<br>"
                 "Tamanho: quantidade de alunos<br>"
                 "Cor: variação das notas<br>"
-                "Linha tracejada: tendência"
+                "Linha tracejada: tendência (quando disponível)"
             ),
             xref="paper", yref="paper",
             x=0, y=1.08,
@@ -373,10 +392,11 @@ def create_declaration_vs_score_scatter(df):
     )
     
     # Ajusta escalas e referências
-    fig.update_traces(
-        marker=dict(sizeref=2.*max(grp['total'])/(40.**2)),
-        selector=dict(mode='markers')
-    )
+    if len(grp) > 0:  # apenas se houver dados
+        fig.update_traces(
+            marker=dict(sizeref=2.*max(grp['total'])/(40.**2)),
+            selector=dict(mode='markers')
+        )
     fig.update_xaxes(range=[0, 100])
     
     return fig
