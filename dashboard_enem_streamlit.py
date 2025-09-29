@@ -249,7 +249,10 @@ def decode_enem_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_declaration_vs_score_scatter(df):
 
-    return create_income_bar_chart(df)
+    fig = create_income_bar_chart(df)
+    if fig is None:
+        fig = px.bar(title="Sem dados suficientes para distribuição de renda")
+    return fig
 
 
 def create_top_mun_declared_bar(df, top_n=10):
