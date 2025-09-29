@@ -424,9 +424,11 @@ def create_parent_education_vs_mean_note(df):
             mean_val = pivot_mean.loc[y, x]
             cnt = int(pivot_count.loc[y, x]) if x in pivot_count.columns and y in pivot_count.index else 0
             if np.isnan(mean_val):
-                row.append(f"Média: n/a\nContagem: {cnt}")
+                row.append(f"Média: n/a
+Contagem: {cnt}")
             else:
-                row.append(f"Média: {mean_val:.2f}\nContagem: {cnt}")
+                row.append(f"Média: {mean_val:.2f}
+Contagem: {cnt}")
         hover_text.append(row)
 
     fig.data[0].hovertemplate = '%{y}<br>%{x}<br>%{customdata}<extra></extra>'
@@ -516,9 +518,12 @@ def main():
         st.error("⚠️ Não foi possível carregar dados. Verifique a conexão/configurações do banco.")
         st.stop()
 
+    # Decodifica categorias e preenche notas com médias municipais quando necessário
     df = decode_enem_categories(df_raw)
 
+    # opção no sidebar: mostrar apenas renda declarada para o gráfico de renda
     st.sidebar.header("Filtros do Dashboard")
+    show_only_declared_renda = st.sidebar.checkbox("Mostrar apenas registros com renda declarada (Q005)", value=False)
 
     regioes = ["Todas"] + sorted(df["regiao"].dropna().unique())
     ufs = ["Todas"] + sorted(df["uf"].dropna().unique())
@@ -563,12 +568,31 @@ def main():
     media_matematica = df_filtrado['nota_mt_matematica'].mean()
     media_redacao = df_filtrado['nota_redacao'].mean()
 
+    # Contagem de regiões — duas métricas: seleção (após filtros) e total (todo o dataset carregado)
+    selection_regions = int(df_filtrado['regiao'].dropna().nunique())
+    total_regions = int(df['regiao'].dropna().nunique())
+    # listas resumidas (apenas para exibir quando pequenas)
+    sel_regions_list = sorted(df_filtrado['regiao'].dropna().unique().tolist())
+    total_regions_list = sorted(df['regiao'].dropna().unique().tolist())
+
     with col_met1:
         st.metric(label="Média Geral (5 Notas)", value=f"{media_geral:.2f} pts")
     with col_met2:
         st.metric(label="Média Matemática", value=f"{media_matematica:.2f} pts")
     with col_met3:
         st.metric(label="Média Redação", value=f"{media_redacao:.2f} pts")
+    with col_met4:
+        # exibe sempre o total de regiões do dataset (atende ao seu pedido: "tem que ser todas")
+        st.metric(label="Regiões (total no dataset)", value=f"{total_regions}")
+        # mostra resumo das regiões selecionadas (apenas quando poucas) para não poluir a UI
+        if selection_regions == 0:
+            st.caption("Seleção atual: nenhuma região com dados disponíveis")
+        elif selection_regions == 1:
+            st.caption(f"Seleção atual: {sel_regions_list[0]}")
+        elif selection_regions <= 3:
+            st.caption("Seleção atual: " + ", ".join(sel_regions_list))
+        else:
+            st.caption(f"Seleção atual: {selection_regions} regiões (use o filtro 'Região' para detalhar)")
 
     st.markdown("---")
 
@@ -587,9 +611,19 @@ def main():
 
         st.markdown("---")
 
-        col3 = st.columns(2)
-        
+        col3, col4 = st.columns(2)
         with col3:
+            # aplica filtro opcional para renda declarada
+            fig3 = create_income_bar_chart(df_filtrado, only_declared=show_only_declared_renda)
+            pct_unknown = (df_filtrado['faixa_renda_legivel'].fillna('Desconhecido') == 'Desconhecido').mean()
+            if fig3 is None or pct_unknown > 0.7:
+                st.warning("Mais de 70% dos registros têm faixa de renda 'Desconhecido'. Mostrando alternativas relevantes.")
+                # novo tema: taxa de declaração vs nota média por município
+                fig_alt = create_declaration_vs_score_scatter(df_filtrado)
+                st.plotly_chart(fig_alt, use_container_width=True)
+            else:
+                st.plotly_chart(fig3, use_container_width=True)
+        with col4:
             fig4 = create_notes_box_plot(df_filtrado)
             st.plotly_chart(fig4, use_container_width=True)
 
@@ -600,6 +634,7 @@ def main():
 
         st.markdown("---")
 
+        # mostrar apenas o boxplot de renda vs matemática em largura completa (removido gráfico lateral confuso)
         st.subheader('Impacto da Renda na Nota de Matemática')
         fig5 = create_income_vs_math_box_plot(df_filtrado)
         st.plotly_chart(fig5, use_container_width=True)
@@ -690,8 +725,3 @@ if __name__ == '__main__':
         st.error("Erro ao executar o aplicativo. Trace abaixo:")
         st.text(traceback.format_exc())
         print(traceback.format_exc())
-
-
-
-
-
