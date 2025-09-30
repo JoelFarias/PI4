@@ -11,6 +11,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.metrics import r2_score
 import numpy as np
 from sklearn.linear_model import LinearRegression
+from scipy import sparse  # adicionado para checar/usar matrizes esparsas
 
 # -------------------- Configurações --------------------
 st.set_page_config(page_title="ENEM 2024 - Dashboard (Agregado Municipal)", layout="wide")
@@ -22,6 +23,10 @@ DB_CONFIG = {
     'user': 'data_iesb',
     'password': 'iesb'
 }
+
+# Limites para evitar envio de dados excessivos ao navegador
+MAX_DISPLAY_ROWS = 1000      # linhas máximas exibidas em st.dataframe para evitar MessageSizeError
+MAX_MAP_POINTS = 1000        # pontos máximos enviados ao mapbox (amostragem se exceder)
 
 Q005_MAP = {
     'A': 'Nenhuma Renda', 'B': 'Até R$ 1.320,00', 'C': 'De R$ 1.320,01 a R$ 1.980,00',
@@ -44,6 +49,15 @@ escolaridade_map = {
 # -------------------- Função de carregamento  --------------------
 @st.cache_data(show_spinner="Conectando e carregando amostra do ENEM 2024 (agregado municipal)...")
 def load_data(sample_size=50000, randomize=False, quick_check_rows=2000):
+    """
+    Estratégia revisada:
+    - Primeiro busca participantes com colunas essenciais (sem fazer JOIN/AGG pesado no DB).
+    - Extrai municípios distintos presentes nos participantes e depois agrega a tabela de resultados apenas para esses municípios (quando prático).
+    - Faz join localmente em pandas com a tabela municipio já carregada (presume-se menor).
+    - Evita ORDER BY RANDOM() e evita criar cláusulas LIMIT por padrão (conforme instrução do usuário),
+      mas reduz custo de agregação ao focar apenas nos municípios relevantes.
+    - Em caso de muitos municípios distintos, faz fallback para agregação completa no banco (com try/except).
+    """
     connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     engine = None
     try:
@@ -61,94 +75,125 @@ def load_data(sample_size=50000, randomize=False, quick_check_rows=2000):
             st.error(f"Tabelas faltando no banco: {missing}. Verifique nomes/permissões.")
             return pd.DataFrame()
 
-        order_clause = "ORDER BY RANDOM()" if randomize else ""
-        limit_clause = ""
-        query = f"""
+        # 1) Ler participantes com as colunas essenciais (evita joins pesados no servidor)
+        participantes_query = f"""
             SELECT
-                p.q001                       AS escolaridade_pai,
-                p.q002                       AS escolaridade_mae,
-                p.q005                       AS faixa_renda,
-                p.tp_sexo                    AS sexo,
-                p.tp_cor_raca                AS cor_raca,
-                p.idade_calculada            AS idade,
-                p.co_municipio_prova,
-                p.sg_uf_prova                AS uf,
-                p.regiao_nome_prova          AS regiao,
-                m.nome_municipio,
-                m.latitude,
-                m.longitude,
-                r_agg.nota_cn_media_mun,
-                r_agg.nota_ch_media_mun,
-                r_agg.nota_lc_media_mun,
-                r_agg.nota_mt_media_mun,
-                r_agg.nota_redacao_media_mun,
-                r_agg.nota_media_5_notas_media_mun,
-                r_agg.resultados_count_mun
-            FROM ed_enem_2024_participantes p
-            LEFT JOIN (
-                SELECT
-                    co_municipio_prova,
-                    AVG(nota_cn_ciencias_da_natureza)                AS nota_cn_media_mun,
-                    AVG(nota_ch_ciencias_humanas)                    AS nota_ch_media_mun,
-                    AVG(nota_lc_linguagens_e_codigos)                AS nota_lc_media_mun,
-                    AVG(nota_mt_matematica)                          AS nota_mt_media_mun,
-                    AVG(nota_redacao)                                AS nota_redacao_media_mun,
-                    AVG(nota_media_5_notas)                          AS nota_media_5_notas_media_mun,
-                    COUNT(*)                                         AS resultados_count_mun
-                FROM ed_enem_2024_resultados_amos_per
-                GROUP BY co_municipio_prova
-            ) r_agg
-              ON r_agg.co_municipio_prova = p.co_municipio_prova
-            LEFT JOIN municipio m
-              ON p.co_municipio_prova = m.codigo_municipio_dv
-            WHERE p.q001 IS NOT NULL
-              AND p.q002 IS NOT NULL
-              AND p.q005 IS NOT NULL
-            {order_clause}
-            {limit_clause};
+                nu_inscricao,
+                q001,
+                q002,
+                q005,
+                tp_sexo,
+                tp_cor_raca,
+                idade_calculada,
+                co_municipio_prova,
+                sg_uf_prova,
+                regiao_nome_prova
+            FROM ed_enem_2024_participantes
+            WHERE q001 IS NOT NULL
+              AND q002 IS NOT NULL
+              AND q005 IS NOT NULL
         """
+        df_p = pd.read_sql(participantes_query, engine)
 
-        df = pd.read_sql(query, engine)
-        if df is not None and len(df) > 0:
-            return df
-        p_sample = pd.read_sql(f"SELECT nu_inscricao, q001, q002, q005, tp_sexo, tp_cor_raca, idade_calculada, co_municipio_prova, sg_uf_prova, regiao_nome_prova FROM ed_enem_2024_participantes LIMIT {quick_check_rows};", engine)
-        r_sample = pd.read_sql(f"SELECT co_municipio_prova, nota_cn_ciencias_da_natureza, nota_ch_ciencias_humanas, nota_lc_linguagens_e_codigos, nota_mt_matematica, nota_redacao, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT {quick_check_rows};", engine)
+        if df_p is None or df_p.empty:
+            # fallback: tentar amostras de verificação (comportamento anterior)
+            p_sample = pd.read_sql(f"SELECT nu_inscricao, q001, q002, q005, tp_sexo, tp_cor_raca, idade_calculada, co_municipio_prova, sg_uf_prova, regiao_nome_prova FROM ed_enem_2024_participantes LIMIT {quick_check_rows};", engine)
+            r_sample = pd.read_sql(f"SELECT co_municipio_prova, nota_cn_ciencias_da_natureza, nota_ch_ciencias_humanas, nota_lc_linguagens_e_codigos, nota_mt_matematica, nota_redacao, nota_media_5_notas FROM ed_enem_2024_resultados_amos_per LIMIT {quick_check_rows};", engine)
+            if p_sample.empty and r_sample.empty:
+                return pd.DataFrame()
+            # agrega amostra de resultados em pandas e faz merge similar ao anterior
+            if not r_sample.empty:
+                r_sample['co_municipio_prova'] = r_sample['co_municipio_prova'].astype(str).str.strip()
+                r_agg = r_sample.groupby('co_municipio_prova').agg({
+                    'nota_cn_ciencias_da_natureza': 'mean',
+                    'nota_ch_ciencias_humanas': 'mean',
+                    'nota_lc_linguagens_e_codigos': 'mean',
+                    'nota_mt_matematica': 'mean',
+                    'nota_redacao': 'mean',
+                    'nota_media_5_notas': 'mean'
+                }).reset_index().rename(columns={
+                    'nota_cn_ciencias_da_natureza': 'nota_cn_media_mun',
+                    'nota_ch_ciencias_humanas': 'nota_ch_media_mun',
+                    'nota_lc_linguagens_e_codigos': 'nota_lc_media_mun',
+                    'nota_mt_matematica': 'nota_mt_media_mun',
+                    'nota_redacao': 'nota_redacao_media_mun',
+                    'nota_media_5_notas': 'nota_media_5_notas_media_mun'
+                })
+            else:
+                r_agg = pd.DataFrame()
 
-        if p_sample.empty and r_sample.empty:
+            if not p_sample.empty and not r_agg.empty:
+                p_sample['co_municipio_prova'] = p_sample['co_municipio_prova'].astype(str).str.strip()
+                merged = p_sample.merge(r_agg, on='co_municipio_prova', how='left')
+                m = pd.read_sql("SELECT codigo_municipio_dv, nome_municipio, latitude, longitude FROM municipio;", engine)
+                m['codigo_municipio_dv'] = m['codigo_municipio_dv'].astype(str).str.strip()
+                merged = merged.merge(m, left_on='co_municipio_prova', right_on='codigo_municipio_dv', how='left')
+                return merged
+
+            if not p_sample.empty:
+                return p_sample
+
+            if not r_sample.empty:
+                return r_sample
+
             return pd.DataFrame()
 
-        if not r_sample.empty:
-            r_sample['co_municipio_prova'] = r_sample['co_municipio_prova'].astype(str).str.strip()
-            r_agg = r_sample.groupby('co_municipio_prova').agg({
-                'nota_cn_ciencias_da_natureza': 'mean',
-                'nota_ch_ciencias_humanas': 'mean',
-                'nota_lc_linguagens_e_codigos': 'mean',
-                'nota_mt_matematica': 'mean',
-                'nota_redacao': 'mean',
-                'nota_media_5_notas': 'mean'
-            }).reset_index().rename(columns={
-                'nota_cn_ciencias_da_natureza': 'nota_cn_media_mun',
-                'nota_ch_ciencias_humanas': 'nota_ch_media_mun',
-                'nota_lc_linguagens_e_codigos': 'nota_lc_media_mun',
-                'nota_mt_matematica': 'nota_mt_media_mun',
-                'nota_redacao': 'nota_redacao_media_mun',
-                'nota_media_5_notas': 'nota_media_5_notas_media_mun'
-            })
-        else:
+        # Normal flow: temos participantes em df_p
+        df_p['co_municipio_prova'] = df_p['co_municipio_prova'].astype(str).str.strip()
+        municipios = df_p['co_municipio_prova'].dropna().unique().tolist()
+
+        # 2) Agregar resultados apenas para os municípios presentes (reduz custo do GROUP BY)
+        r_agg = pd.DataFrame()
+        try:
+            if len(municipios) > 0 and len(municipios) <= 4000:
+                # construir cláusula IN segura (quando não muito grande)
+                placeholders = ','.join(f"'{m}'" for m in municipios)
+                resultados_query = f"""
+                    SELECT
+                        co_municipio_prova,
+                        AVG(nota_cn_ciencias_da_natureza)                AS nota_cn_media_mun,
+                        AVG(nota_ch_ciencias_humanas)                    AS nota_ch_media_mun,
+                        AVG(nota_lc_linguagens_e_codigos)                AS nota_lc_media_mun,
+                        AVG(nota_mt_matematica)                          AS nota_mt_media_mun,
+                        AVG(nota_redacao)                                AS nota_redacao_media_mun,
+                        AVG(nota_media_5_notas)                          AS nota_media_5_notas_media_mun,
+                        COUNT(*)                                         AS resultados_count_mun
+                    FROM ed_enem_2024_resultados_amos_per
+                    WHERE co_municipio_prova IN ({placeholders})
+                    GROUP BY co_municipio_prova;
+                """
+                r_agg = pd.read_sql(resultados_query, engine)
+                r_agg['co_municipio_prova'] = r_agg['co_municipio_prova'].astype(str).str.strip()
+            else:
+                # Fallback: se muitos municípios (ou lista muito grande), delegar a agregação no servidor sem filtro (poderá ser custoso)
+                resultados_query = f"""
+                    SELECT
+                        co_municipio_prova,
+                        AVG(nota_cn_ciencias_da_natureza)                AS nota_cn_media_mun,
+                        AVG(nota_ch_ciencias_humanas)                    AS nota_ch_media_mun,
+                        AVG(nota_lc_linguagens_e_codigos)                AS nota_lc_media_mun,
+                        AVG(nota_mt_matematica)                          AS nota_mt_media_mun,
+                        AVG(nota_redacao)                                AS nota_redacao_media_mun,
+                        AVG(nota_media_5_notas)                          AS nota_media_5_notas_media_mun,
+                        COUNT(*)                                         AS resultados_count_mun
+                    FROM ed_enem_2024_resultados_amos_per
+                    GROUP BY co_municipio_prova;
+                """
+                r_agg = pd.read_sql(resultados_query, engine)
+                r_agg['co_municipio_prova'] = r_agg['co_municipio_prova'].astype(str).str.strip()
+        except Exception:
+            # Se algo falhar na agregação, não quebramos: tentamos uma leitura mais curta de verificação
             r_agg = pd.DataFrame()
 
-        if not p_sample.empty and not r_agg.empty:
-            p_sample['co_municipio_prova'] = p_sample['co_municipio_prova'].astype(str).str.strip()
-            merged = p_sample.merge(r_agg, on='co_municipio_prova', how='left')
-            return merged
+        # 3) Trazer dados de município (normalmente tabela pequena)
+        m = pd.read_sql("SELECT codigo_municipio_dv, nome_municipio, latitude, longitude FROM municipio;", engine)
+        m['codigo_municipio_dv'] = m['codigo_municipio_dv'].astype(str).str.strip()
 
-        if not p_sample.empty:
-            return p_sample
+        # 4) Merge local (menos trabalho no servidor de banco quando r_agg foi filtrado)
+        df = df_p.merge(r_agg, left_on='co_municipio_prova', right_on='co_municipio_prova', how='left') if not r_agg.empty else df_p.copy()
+        df = df.merge(m, left_on='co_municipio_prova', right_on='codigo_municipio_dv', how='left')
 
-        if not r_sample.empty:
-            return r_sample
-
-        return pd.DataFrame()
+        return df
 
     except SQLAlchemyError:
         st.error("Erro ao consultar o banco de dados.")
@@ -429,13 +474,20 @@ def analise_preditiva(df: pd.DataFrame):
     num_features = ['idh']
     preprocessor = ColumnTransformer(
         transformers=[
-            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), cat_features)
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=True), cat_features)
         ],
         remainder='passthrough'
     )
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     X_train_processed = preprocessor.fit_transform(X_train)
     X_test_processed = preprocessor.transform(X_test)
+
+    # converter esparso para denso somente se necessário (RandomForest não aceita esparso)
+    if sparse.issparse(X_train_processed):
+        X_train_processed = X_train_processed.toarray()
+    if sparse.issparse(X_test_processed):
+        X_test_processed = X_test_processed.toarray()
+
     model_rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1, max_depth=10, min_samples_leaf=5)
     model_rf.fit(X_train_processed, y_train)
     y_pred_rf = model_rf.predict(X_test_processed)
@@ -497,6 +549,14 @@ def criar_mapa_municipios(df):
         nota_media=('nota_media_5_notas', 'mean'),
         participantes=('nota_media_5_notas', 'count')
     ).reset_index()
+
+    # Proteção: se houver muitos municípios, amostramos os maiores por participantes
+    if len(df_map) > MAX_MAP_POINTS:
+        df_map = df_map.nlargest(MAX_MAP_POINTS, 'participantes').reset_index(drop=True)
+        title_suffix = " (amostra dos maiores municípios para desempenho/velocidade)"
+    else:
+        title_suffix = ""
+
     fig = px.scatter_mapbox(
         df_map,
         lat='latitude',
@@ -508,7 +568,7 @@ def criar_mapa_municipios(df):
         size_max=18,
         zoom=3.5,
         mapbox_style='open-street-map',
-        title='Nota Média por Município (mapa interativo)'
+        title=f'Nota Média por Município (mapa interativo){title_suffix}'
     )
     fig.update_layout(
         margin=dict(t=40, b=20, l=0, r=0),
@@ -664,8 +724,8 @@ def main():
         st.dataframe(top_mun.style.format({'nota_media': '{:.2f}', 'participantes': '{:,}'}), use_container_width=True)
 
         st.subheader("Mapa Interativo por Município")
-        if 'latitude' in df.columns and 'longitude' in df.columns:
-            fig_map = criar_mapa_municipios(df)
+        if 'latitude' in df_filtrado.columns and 'longitude' in df_filtrado.columns:
+            fig_map = criar_mapa_municipios(df_filtrado)  # corrigido: usar df_filtrado
             if fig_map:
                 st.plotly_chart(fig_map, use_container_width=True)
             else:
@@ -703,7 +763,20 @@ ATENÇÃO: quando a nota individual do participante não existir, utilizamos a m
 
     st.markdown("---")
     with st.expander("📄 Ver Dados Brutos Filtrados"):
-        st.dataframe(df_filtrado, use_container_width=True)
+        # Mostrar apenas uma amostra para evitar enviar todo o dataframe ao navegador
+        total_rows = len(df_filtrado)
+        rows_to_show = min(total_rows, MAX_DISPLAY_ROWS)
+        st.write(f"Mostrando {rows_to_show} de {total_rows} registros (amostra para visualização).")
+        st.dataframe(df_filtrado.head(rows_to_show), use_container_width=True)
+
+        # Fornecer download do CSV completo (apenas quando o usuário solicitar)
+        csv_bytes = df_filtrado.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Baixar CSV completo (todos os registros)",
+            data=csv_bytes,
+            file_name="enem_agregado_filtrado.csv",
+            mime="text/csv"
+        )
 
     st.caption("Dashboard ENEM 2024 - Agregado Municipal. Dados: PostgreSQL.")
 
