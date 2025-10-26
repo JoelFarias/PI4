@@ -224,9 +224,9 @@ with tab3:
                 st.plotly_chart(fig, use_container_width=True)
                 
                 st.dataframe(
-                    df_top_mun[['municipio', 'uf', 'media_geral', 'total_participantes']].style.format({
+                    df_top_mun[['municipio', 'uf', 'media_geral', 'quantidade_participantes']].style.format({
                         'media_geral': '{:.1f}',
-                        'total_participantes': '{:,.0f}'
+                        'quantidade_participantes': '{:,.0f}'
                     }).background_gradient(cmap='Greens', subset=['media_geral']),
                     use_container_width=True
                 )
@@ -248,9 +248,9 @@ with tab3:
                 st.plotly_chart(fig, use_container_width=True)
                 
                 st.dataframe(
-                    df_bottom_mun[['municipio', 'uf', 'media_geral', 'total_participantes']].style.format({
+                    df_bottom_mun[['municipio', 'uf', 'media_geral', 'quantidade_participantes']].style.format({
                         'media_geral': '{:.1f}',
-                        'total_participantes': '{:,.0f}'
+                        'quantidade_participantes': '{:,.0f}'
                     }).background_gradient(cmap='Reds_r', subset=['media_geral']),
                     use_container_width=True
                 )

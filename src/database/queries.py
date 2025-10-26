@@ -165,6 +165,74 @@ def get_participantes_sample(
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=Config.CACHE_TTL, show_spinner="Carregando dados de notas...")
+def get_resultados_sample(
+    limit: int = 1000,
+    columns: Optional[List[str]] = None,
+    where_clause: str = "",
+    order_by: str = None
+) -> pd.DataFrame:
+    """
+    Retorna amostra de RESULTADOS (apenas notas, SEM JOIN com participantes).
+    Use esta função quando precisar apenas de dados de notas/desempenho.
+    
+    Args:
+        limit: Número máximo de registros
+        columns: Lista de colunas a selecionar (None = todas as notas)
+        where_clause: Cláusula WHERE (sem o WHERE)
+        order_by: Cláusula ORDER BY
+        
+    Returns:
+        DataFrame com dados de notas
+    """
+    try:
+        # Colunas padrão se não especificadas
+        if columns is None:
+            cols = """
+                nu_inscricao,
+                nota_cn_ciencias_da_natureza,
+                nota_ch_ciencias_humanas,
+                nota_lc_linguagens_e_codigos,
+                nota_mt_matematica,
+                nota_redacao,
+                nota_media_5_notas
+            """
+        else:
+            cols = ", ".join(columns)
+        
+        # Montar query
+        query = f"""
+            SELECT {cols}
+            FROM {TABLE_RESULTADOS}
+        """
+        
+        # Adicionar WHERE se fornecido
+        if where_clause:
+            query += f" WHERE {where_clause}"
+        else:
+            # Garantir que há notas válidas
+            query += " WHERE nota_media_5_notas IS NOT NULL"
+        
+        # Adicionar LIMIT
+        query += f" LIMIT {limit}"
+        
+        # Adicionar ORDER BY se fornecido
+        if order_by:
+            query = f"SELECT * FROM ({query}) AS sample ORDER BY {order_by}"
+        
+        # Executar query
+        with DatabaseConnection.get_cursor() as cur:
+            cur.execute(query)
+            columns_names = [desc[0] for desc in cur.description]
+            data = cur.fetchall()
+        
+        return pd.DataFrame(data, columns=columns_names)
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar amostra de resultados: {e}")
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=Config.CACHE_TTL, show_spinner="Carregando estatísticas...")
 def get_notas_estatisticas() -> pd.DataFrame:
     """
@@ -276,7 +344,7 @@ def get_distribuicao_por_campo(campo: str, limit: int = 50) -> pd.DataFrame:
 def get_media_por_escolaridade(tipo: str = 'pai') -> pd.DataFrame:
     """
     Retorna média de notas por escolaridade dos pais.
-    NOTA: Faz JOIN entre PARTICIPANTES (dados socioeconômicos) e RESULTADOS (notas).
+    NOTA: Busca APENAS da tabela RESULTADOS (não faz JOIN).
     
     Args:
         tipo: 'pai' ou 'mae'
@@ -290,22 +358,19 @@ def get_media_por_escolaridade(tipo: str = 'pai') -> pd.DataFrame:
         
         query = f"""
             SELECT
-                p.{campo} as {col_name},
+                {campo} as {col_name},
                 COUNT(*) as quantidade,
-                ROUND(AVG(r.nota_cn_ciencias_da_natureza), 2) as cn_media,
-                ROUND(AVG(r.nota_ch_ciencias_humanas), 2) as ch_media,
-                ROUND(AVG(r.nota_lc_linguagens_e_codigos), 2) as lc_media,
-                ROUND(AVG(r.nota_mt_matematica), 2) as mt_media,
-                ROUND(AVG(r.nota_redacao), 2) as red_media,
-                ROUND(AVG(r.nota_media_5_notas), 2) as media_geral
-            FROM {TABLE_PARTICIPANTES} p
-            INNER JOIN {TABLE_RESULTADOS} r 
-                ON p.nu_ano = r.nu_ano 
-                AND p.co_municipio_prova = r.co_municipio_prova
-            WHERE p.{campo} IS NOT NULL
-                AND r.nota_media_5_notas IS NOT NULL
-            GROUP BY p.{campo}
-            ORDER BY p.{campo}
+                ROUND(AVG(nota_cn_ciencias_da_natureza), 2) as cn_media,
+                ROUND(AVG(nota_ch_ciencias_humanas), 2) as ch_media,
+                ROUND(AVG(nota_lc_linguagens_e_codigos), 2) as lc_media,
+                ROUND(AVG(nota_mt_matematica), 2) as mt_media,
+                ROUND(AVG(nota_redacao), 2) as red_media,
+                ROUND(AVG(nota_media_5_notas), 2) as media_geral
+            FROM {TABLE_RESULTADOS}
+            WHERE {campo} IS NOT NULL
+                AND nota_media_5_notas IS NOT NULL
+            GROUP BY {campo}
+            ORDER BY {campo}
         """
         
         with DatabaseConnection.get_cursor() as cur:
@@ -456,7 +521,16 @@ def get_media_por_municipio(top_n: int = 100, order: str = 'DESC') -> pd.DataFra
             columns_names = [desc[0] for desc in cur.description]
             data = cur.fetchall()
         
-        return pd.DataFrame(data, columns=columns_names)
+        df = pd.DataFrame(data, columns=columns_names)
+        
+        # Converter colunas numéricas de Decimal para float
+        numeric_cols = ['quantidade_participantes', 'media_geral', 'media_cn', 'media_ch', 
+                       'media_lc', 'media_mt', 'media_redacao', 'latitude', 'longitude']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
         
     except Exception as e:
         logger.error(f"Erro ao carregar média por município: {e}")
@@ -531,7 +605,16 @@ def get_media_por_uf() -> pd.DataFrame:
             columns_names = [desc[0] for desc in cur.description]
             data = cur.fetchall()
         
-        return pd.DataFrame(data, columns=columns_names)
+        df = pd.DataFrame(data, columns=columns_names)
+        
+        # Converter colunas numéricas de Decimal para float
+        numeric_cols = ['total_participantes', 'cn_media', 'ch_media', 'lc_media', 
+                       'mt_media', 'red_media', 'media_geral']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
         
     except Exception as e:
         logger.error(f"Erro ao carregar média por UF: {e}")
@@ -569,7 +652,16 @@ def get_media_por_regiao() -> pd.DataFrame:
             columns_names = [desc[0] for desc in cur.description]
             data = cur.fetchall()
         
-        return pd.DataFrame(data, columns=columns_names)
+        df = pd.DataFrame(data, columns=columns_names)
+        
+        # Converter colunas numéricas de Decimal para float
+        numeric_cols = ['total_participantes', 'cn_media', 'ch_media', 'lc_media', 
+                       'mt_media', 'red_media', 'media_geral']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
         
     except Exception as e:
         logger.error(f"Erro ao carregar média por região: {e}")
