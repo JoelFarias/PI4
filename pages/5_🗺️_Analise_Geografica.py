@@ -9,6 +9,7 @@ import numpy as np
 
 from src.utils.config import Config
 from src.utils.constants import REGIOES
+from src.utils.theme import apply_minimal_theme, get_plotly_theme
 from src.database.queries import (
     get_media_por_municipio,
     get_media_por_uf,
@@ -30,7 +31,9 @@ st.set_page_config(
     layout=Config.APP_LAYOUT
 )
 
-st.title("🗺️ Análise Geoespacial")
+apply_minimal_theme()
+
+st.title("Análise Geoespacial")
 st.markdown("Análise de desempenho por localização geográfica e desenvolvimento municipal")
 st.markdown("---")
 

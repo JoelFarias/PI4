@@ -206,7 +206,11 @@ class Config:
         Returns:
             True se em produção (Streamlit Cloud)
         """
-        return hasattr(st, 'secrets') and 'database' in st.secrets
+        try:
+            return hasattr(st, 'secrets') and 'database' in st.secrets
+        except Exception:
+            # Se st.secrets não existe ou gera erro, não está em produção
+            return False
     
     @classmethod
     def get_all_config(cls) -> Dict[str, Any]:

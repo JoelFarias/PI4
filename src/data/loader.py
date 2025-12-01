@@ -1,5 +1,9 @@
 """
 Módulo de carregamento de dados do ENEM 2024.
+
+IMPORTANTE: As tabelas ed_enem_2024_participantes (socioeconômico) e 
+ed_enem_2024_resultados (notas) não têm relação direta por participante.
+A análise é realizada no nível MUNICIPAL (análise ecológica).
 """
 
 import pandas as pd
@@ -11,7 +15,13 @@ from ..database.queries import (
     get_participantes_sample,
     get_notas_estatisticas,
     get_distribuicao_por_campo,
-    execute_custom_query
+    execute_custom_query,
+    get_dados_municipio_completo,
+    get_participantes_aggregated,
+    get_resultados_aggregated,
+    get_media_por_municipio,
+    get_media_por_uf,
+    get_media_por_regiao
 )
 from ..utils.config import Config
 from ..utils.constants import COLUNAS_NOTAS
@@ -19,6 +29,163 @@ from ..utils.constants import COLUNAS_NOTAS
 
 logger = logging.getLogger(__name__)
 
+
+# ==============================================================================
+# FUNÇÕES DE CARREGAMENTO - NÍVEL MUNICIPAL (RECOMENDADO)
+# ==============================================================================
+
+@st.cache_data(ttl=Config.CACHE_TTL, show_spinner="Carregando dados municipais...")
+def load_municipio_data(min_participantes: int = 30) -> pd.DataFrame:
+    """
+    Carrega dados completos agregados por município.
+    
+    Esta é a função principal para carregar dados para análise.
+    Retorna um DataFrame com uma linha por município contendo:
+    - Dados socioeconômicos agregados (percentuais)
+    - Médias de desempenho
+    - Informações geográficas
+    
+    Args:
+        min_participantes: Mínimo de participantes por município (padrão: 30)
+        
+    Returns:
+        DataFrame com dados municipais (~5.570 municípios)
+    """
+    try:
+        logger.info(f"Iniciando carregamento de dados municipais (min_participantes={min_participantes})")
+        df = get_dados_municipio_completo(min_participantes)
+        
+        if df.empty:
+            logger.warning(f"⚠️ DataFrame vazio retornado! Nenhum município com >= {min_participantes} participantes")
+        else:
+            logger.info(f"✅ Sucesso: {len(df)} municípios carregados")
+            logger.debug(f"Colunas disponíveis: {df.columns.tolist()}")
+            logger.debug(f"Primeiros municípios: {df['municipio'].head(3).tolist() if 'municipio' in df.columns else 'N/A'}")
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao carregar dados municipais: {e}", exc_info=True)
+        st.error(f"Erro ao carregar dados: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=Config.CACHE_TTL)
+def load_municipio_features_for_model() -> tuple:
+    """
+    Carrega features municipais preparadas para machine learning.
+    
+    Returns:
+        Tupla (DataFrame, lista de nomes de features)
+    """
+    try:
+        df = load_municipio_data()
+        
+        if df.empty:
+            return pd.DataFrame(), []
+        
+        # Features para modelos
+        feature_cols = [
+            'perc_pai_ensino_superior',
+            'perc_mae_ensino_superior',
+            'perc_pais_ensino_superior',
+            'perc_pai_ocupacao_qualificada',
+            'perc_mae_ocupacao_qualificada',
+            'perc_renda_alta',
+            'perc_renda_baixa',
+            'media_pessoas_residencia',
+            'perc_escola_privada',
+            'perc_escola_publica',
+            'perc_feminino',
+            'idade_media',
+            'total_participantes'
+        ]
+        
+        # Filtrar apenas features disponíveis
+        available_features = [col for col in feature_cols if col in df.columns]
+        
+        return df, available_features
+        
+    except Exception as e:
+        logger.error(f"Erro ao preparar features municipais: {e}")
+        return pd.DataFrame(), []
+
+
+@st.cache_data(ttl=Config.CACHE_TTL)
+def load_municipio_by_region(regiao: str = None, uf: str = None) -> pd.DataFrame:
+    """
+    Carrega dados municipais filtrados por região ou UF.
+    
+    Args:
+        regiao: Nome da região (Norte, Nordeste, Sudeste, Sul, Centro-Oeste)
+        uf: Sigla da UF (SP, RJ, MG, etc.)
+        
+    Returns:
+        DataFrame com municípios filtrados
+    """
+    try:
+        df = load_municipio_data()
+        
+        if df.empty:
+            return df
+        
+        if uf:
+            df = df[df['uf'] == uf]
+        elif regiao:
+            df = df[df['regiao'] == regiao]
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"Erro ao filtrar municípios: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=Config.CACHE_TTL)
+def load_top_municipios(n: int = 100, order: str = 'DESC') -> pd.DataFrame:
+    """
+    Carrega top N municípios por desempenho.
+    
+    Args:
+        n: Número de municípios
+        order: 'DESC' para melhores, 'ASC' para piores
+        
+    Returns:
+        DataFrame com top municípios
+    """
+    return get_media_por_municipio(top_n=n, order=order)
+
+
+@st.cache_data(ttl=Config.CACHE_TTL)
+def get_municipio_statistics(df: pd.DataFrame) -> Dict:
+    """
+    Calcula estatísticas descritivas dos dados municipais.
+    
+    Args:
+        df: DataFrame com dados municipais
+        
+    Returns:
+        Dicionário com estatísticas
+    """
+    if df.empty:
+        return {}
+    
+    stats = {
+        'total_municipios': len(df),
+        'total_participantes': int(df['total_participantes'].sum()) if 'total_participantes' in df.columns else 0,
+        'media_geral_brasil': round(df['media_geral'].mean(), 2) if 'media_geral' in df.columns else 0,
+        'melhor_municipio': df.iloc[0]['municipio'] if len(df) > 0 and 'municipio' in df.columns else 'N/A',
+        'melhor_nota': round(df.iloc[0]['media_geral'], 2) if len(df) > 0 and 'media_geral' in df.columns else 0,
+        'regioes': df['regiao'].nunique() if 'regiao' in df.columns else 0,
+        'ufs': df['uf'].nunique() if 'uf' in df.columns else 0
+    }
+    
+    return stats
+
+
+# ==============================================================================
+# FUNÇÕES DE CARREGAMENTO - OUTRAS FONTES
+# ==============================================================================
 
 @st.cache_data(ttl=Config.CACHE_TTL, show_spinner="Carregando dados...")
 def load_ifdm_data() -> pd.DataFrame:

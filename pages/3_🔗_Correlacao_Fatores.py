@@ -11,7 +11,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from scipy import stats
 from src.database.connection import DatabaseConnection
+from src.data.loader import load_municipio_data
 from src.utils.config import Config
+from src.utils.theme import apply_minimal_theme, get_plotly_theme
 
 st.set_page_config(
     page_title="Análise de Correlação - ENEM 2024",
@@ -19,7 +21,9 @@ st.set_page_config(
     layout=Config.APP_LAYOUT
 )
 
-st.title("🔗 Análise de Correlação entre Fatores Familiares e Desempenho")
+apply_minimal_theme()
+
+st.title("Correlação entre Fatores Familiares e Desempenho")
 
 st.info("""
 **Metodologia: Correlação Ecológica (Agregada por Município)**
@@ -39,114 +43,116 @@ não no nível individual. Os dados são agregados por município.
 
 @st.cache_data(ttl=3600)
 def get_dados_agregados_municipio():
-    """Agrega dados por município"""
+    """Carrega dados agregados por município"""
     try:
-        query_socio = """
-        SELECT 
-            co_municipio_prova,
-            COUNT(*) as total_alunos,
-            ROUND(100.0 * SUM(CASE WHEN q001 IN ('G', 'H') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_pai_superior,
-            ROUND(100.0 * SUM(CASE WHEN q002 IN ('G', 'H') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_mae_superior,
-            ROUND(100.0 * SUM(CASE WHEN q001 IN ('G', 'H') OR q002 IN ('G', 'H') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_pais_superior,
-            ROUND(100.0 * SUM(CASE WHEN q003 IN ('A', 'B') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_pai_qualificado,
-            ROUND(100.0 * SUM(CASE WHEN q004 IN ('A', 'B') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_mae_qualificado,
-            ROUND(100.0 * SUM(CASE WHEN q003 IN ('A', 'B') OR q004 IN ('A', 'B') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_pais_qualificado,
-            ROUND(100.0 * SUM(CASE WHEN q006 IN ('Q', 'P', 'O', 'N', 'M') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_renda_alta
-        FROM ed_enem_2024_participantes
-        WHERE co_municipio_prova IS NOT NULL
-        GROUP BY co_municipio_prova
-        HAVING COUNT(*) >= 30
-        """
+        # Usar a função centralizada que já foi corrigida
+        df_completo = load_municipio_data(min_participantes=30)
         
-        query_desemp = """
-        SELECT 
-            co_municipio_prova,
-            ROUND(AVG(nota_cn_ciencias_da_natureza)::numeric, 2) as media_cn,
-            ROUND(AVG(nota_ch_ciencias_humanas)::numeric, 2) as media_ch,
-            ROUND(AVG(nota_lc_linguagens_e_codigos)::numeric, 2) as media_lc,
-            ROUND(AVG(nota_mt_matematica)::numeric, 2) as media_mt,
-            ROUND(AVG(nota_redacao)::numeric, 2) as media_redacao,
-            ROUND(AVG((
-                COALESCE(nota_cn_ciencias_da_natureza, 0) +
-                COALESCE(nota_ch_ciencias_humanas, 0) +
-                COALESCE(nota_lc_linguagens_e_codigos, 0) +
-                COALESCE(nota_mt_matematica, 0) +
-                COALESCE(nota_redacao, 0)
-            ) / 5.0)::numeric, 2) as media_geral
-        FROM ed_enem_2024_resultados
-        WHERE co_municipio_prova IS NOT NULL
-            AND nota_cn_ciencias_da_natureza IS NOT NULL
-            AND nota_ch_ciencias_humanas IS NOT NULL
-            AND nota_lc_linguagens_e_codigos IS NOT NULL
-            AND nota_mt_matematica IS NOT NULL
-            AND nota_redacao IS NOT NULL
-        GROUP BY co_municipio_prova
-        HAVING COUNT(*) >= 30
-        """
+        if df_completo.empty:
+            return pd.DataFrame()
         
-        with DatabaseConnection.get_connection() as conn:
-            df_socio = pd.read_sql(query_socio, conn)
-            df_desemp = pd.read_sql(query_desemp, conn)
+        # Renomear colunas para manter compatibilidade com código existente
+        rename_map = {
+            'total_participantes': 'total_alunos',
+            'perc_pais_ensino_superior': 'perc_pais_superior',
+            'perc_pai_ensino_superior': 'perc_pai_superior',
+            'perc_mae_ensino_superior': 'perc_mae_superior',
+            'perc_pai_ocupacao_qualificada': 'perc_pai_qualificado',
+            'perc_mae_ocupacao_qualificada': 'perc_mae_qualificado'
+        }
         
-        df_completo = pd.merge(df_socio, df_desemp, on='co_municipio_prova', how='inner')
+        df_completo = df_completo.rename(columns=rename_map)
         
-        for col in df_completo.columns:
-            if df_completo[col].dtype == 'object':
-                try:
-                    df_completo[col] = pd.to_numeric(df_completo[col], errors='ignore')
-                except:
-                    pass
+        # Adicionar coluna de pais qualificados combinada se não existir
+        if 'perc_pais_qualificado' not in df_completo.columns:
+            df_completo['perc_pais_qualificado'] = (
+                df_completo['perc_pai_qualificado'] + df_completo['perc_mae_qualificado']
+            ) / 2
         
-        return df_completo.astype(float, errors='ignore')
+        # Garantir que todas as colunas numéricas sejam do tipo float
+        numeric_cols = [
+            'total_alunos', 
+            'perc_pai_superior', 'perc_mae_superior', 'perc_pais_superior',
+            'perc_pai_qualificado', 'perc_mae_qualificado', 'perc_pais_qualificado',
+            'perc_renda_alta', 'perc_renda_baixa',
+            'media_pessoas_residencia',
+            'perc_escola_privada', 'perc_escola_publica',
+            'perc_feminino', 'idade_media',
+            'media_cn', 'media_ch', 'media_lc', 'media_mt', 'media_redacao', 'media_geral'
+        ]
+        
+        for col in numeric_cols:
+            if col in df_completo.columns:
+                df_completo[col] = pd.to_numeric(df_completo[col], errors='coerce')
+        
+        # Remover linhas onde as colunas essenciais são NaN
+        essential_cols = ['perc_pai_superior', 'perc_mae_superior', 'media_geral']
+        df_completo = df_completo.dropna(subset=[col for col in essential_cols if col in df_completo.columns])
+        
+        return df_completo
         
     except Exception as e:
         st.error(f"Erro ao carregar dados: {str(e)}")
         return pd.DataFrame()
 
 def calcular_correlacao(x, y, nome_x, nome_y):
-    """Calcula correlação de Pearson"""
-    mask = ~(pd.isna(x) | pd.isna(y))
+    """Calcula correlação de Pearson com validação robusta"""
+    # Garantir que são Series do pandas
+    if not isinstance(x, pd.Series):
+        x = pd.Series(x)
+    if not isinstance(y, pd.Series):
+        y = pd.Series(y)
+    
+    # Converter para numérico
+    x = pd.to_numeric(x, errors='coerce')
+    y = pd.to_numeric(y, errors='coerce')
+    
+    # Filtrar NaN e infinitos
+    mask = ~(pd.isna(x) | pd.isna(y) | np.isinf(x) | np.isinf(y))
     x_clean = x[mask]
     y_clean = y[mask]
     
+    # Verificar variância
     if len(x_clean) < 10:
-        return None, None, "Dados insuficientes"
+        return None, None, "❌ **Dados insuficientes** (menos de 10 observações válidas)"
     
-    corr, p_value = stats.pearsonr(x_clean, y_clean)
+    if x_clean.std() == 0:
+        return None, None, f"❌ **Sem variação em {nome_x}** (todos os valores são iguais)"
     
-    if p_value < 0.001:
-        sig = "***"
-        sig_text = "altamente significativa"
-    elif p_value < 0.01:
-        sig = "**"
-        sig_text = "muito significativa"
-    elif p_value < 0.05:
-        sig = "*"
-        sig_text = "significativa"
-    else:
-        sig = "ns"
-        sig_text = "não significativa"
+    if y_clean.std() == 0:
+        return None, None, f"❌ **Sem variação em {nome_y}** (todos os valores são iguais)"
     
-    texto = f"**Correlação:** r = {corr:.3f}{sig} (p = {p_value:.4f}) - {sig_text}"
-    return corr, p_value, texto
+    try:
+        corr, p_value = stats.pearsonr(x_clean, y_clean)
+        
+        if p_value < 0.001:
+            sig = "***"
+            sig_text = "altamente significativa"
+        elif p_value < 0.01:
+            sig = "**"
+            sig_text = "muito significativa"
+        elif p_value < 0.05:
+            sig = "*"
+            sig_text = "significativa"
+        else:
+            sig = "ns"
+            sig_text = "não significativa"
+        
+        texto = f"**Correlação:** r = {corr:.3f}{sig} (p = {p_value:.4f}) - {sig_text}"
+        texto += f"\n\n📊 **N válido:** {len(x_clean):,} municípios"
+        return corr, p_value, texto
+        
+    except Exception as e:
+        return None, None, f"❌ **Erro ao calcular:** {str(e)}"
 
-with st.spinner("Carregando dados..."):
+with st.spinner("⏳ Carregando dados municipais... Isso pode levar 30-60 segundos na primeira vez."):
     df = get_dados_agregados_municipio()
 
 if df.empty:
-    st.error("Erro ao carregar dados")
+    st.error("❌ Erro ao carregar dados. Verifique a conexão com o banco de dados.")
     st.stop()
 
-st.success(f"Dados carregados: **{len(df):,}** municípios")
-
-# Debug: Mostrar informações sobre os dados
-with st.expander("🔍 Debug - Informações dos Dados"):
-    st.write(f"Total de municípios: {len(df)}")
-    st.write(f"Colunas: {list(df.columns)}")
-    st.write("Primeiras linhas:")
-    st.dataframe(df.head())
-    st.write("Estatísticas básicas:")
-    st.dataframe(df.describe())
+st.success(f"✅ Dados carregados: **{len(df):,}** municípios")
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "📚 Escolaridade",
@@ -167,13 +173,19 @@ with tab1:
         )
         st.markdown(texto_pai)
         
-        fig_pai = px.scatter(
-            df, x='perc_pai_superior', y='media_geral',
-            labels={'perc_pai_superior': '% Pais Ens. Superior', 'media_geral': 'Nota Média'},
-            title=f"Correlação: {corr_pai:.3f}" if corr_pai else "Correlação: N/A"
-        )
-        fig_pai.update_traces(marker=dict(size=8, opacity=0.6))
-        st.plotly_chart(fig_pai, use_container_width=True)
+        if corr_pai is not None:
+            fig_pai = px.scatter(
+                df, x='perc_pai_superior', y='media_geral',
+                labels={'perc_pai_superior': '% Pais Ens. Superior', 'media_geral': 'Nota Média'},
+                title=f"Correlação: r = {corr_pai:.3f}",
+                trendline="ols",
+                hover_data=['municipio', 'uf'] if 'municipio' in df.columns else None
+            )
+            fig_pai.update_traces(marker=dict(size=8, opacity=0.6, color='steelblue'))
+            fig_pai.update_layout(height=400)
+            st.plotly_chart(fig_pai, use_container_width=True)
+        else:
+            st.warning("Não foi possível gerar o gráfico")
     
     with col2:
         st.subheader("Mãe com Ensino Superior")
@@ -182,13 +194,19 @@ with tab1:
         )
         st.markdown(texto_mae)
         
-        fig_mae = px.scatter(
-            df, x='perc_mae_superior', y='media_geral',
-            labels={'perc_mae_superior': '% Mães Ens. Superior', 'media_geral': 'Nota Média'},
-            title=f"Correlação: {corr_mae:.3f}" if corr_mae else "Correlação: N/A"
-        )
-        fig_mae.update_traces(marker=dict(size=8, opacity=0.6))
-        st.plotly_chart(fig_mae, use_container_width=True)
+        if corr_mae is not None:
+            fig_mae = px.scatter(
+                df, x='perc_mae_superior', y='media_geral',
+                labels={'perc_mae_superior': '% Mães Ens. Superior', 'media_geral': 'Nota Média'},
+                title=f"Correlação: r = {corr_mae:.3f}",
+                trendline="ols",
+                hover_data=['municipio', 'uf'] if 'municipio' in df.columns else None
+            )
+            fig_mae.update_traces(marker=dict(size=8, opacity=0.6, color='coral'))
+            fig_mae.update_layout(height=400)
+            st.plotly_chart(fig_mae, use_container_width=True)
+        else:
+            st.warning("Não foi possível gerar o gráfico")
 
 with tab2:
     st.header("💼 Ocupação dos Pais vs Desempenho")
@@ -202,13 +220,19 @@ with tab2:
         )
         st.markdown(texto_ocup_pai)
         
-        fig = px.scatter(
-            df, x='perc_pai_qualificado', y='media_geral',
-            labels={'perc_pai_qualificado': '% Pais Ocupação Qualif.', 'media_geral': 'Nota Média'},
-            title=f"Correlação: {corr_ocup_pai:.3f}" if corr_ocup_pai else "Correlação: N/A"
-        )
-        fig.update_traces(marker=dict(size=8, opacity=0.6))
-        st.plotly_chart(fig, use_container_width=True)
+        if corr_ocup_pai is not None:
+            fig = px.scatter(
+                df, x='perc_pai_qualificado', y='media_geral',
+                labels={'perc_pai_qualificado': '% Pais Ocupação Qualif.', 'media_geral': 'Nota Média'},
+                title=f"Correlação: r = {corr_ocup_pai:.3f}",
+                trendline="ols",
+                hover_data=['municipio', 'uf'] if 'municipio' in df.columns else None
+            )
+            fig.update_traces(marker=dict(size=8, opacity=0.6, color='green'))
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Não foi possível gerar o gráfico")
     
     with col2:
         st.subheader("Mãe Ocupação Qualificada")
@@ -217,13 +241,19 @@ with tab2:
         )
         st.markdown(texto_ocup_mae)
         
-        fig = px.scatter(
-            df, x='perc_mae_qualificado', y='media_geral',
-            labels={'perc_mae_qualificado': '% Mães Ocupação Qualif.', 'media_geral': 'Nota Média'},
-            title=f"Correlação: {corr_ocup_mae:.3f}" if corr_ocup_mae else "Correlação: N/A"
-        )
-        fig.update_traces(marker=dict(size=8, opacity=0.6))
-        st.plotly_chart(fig, use_container_width=True)
+        if corr_ocup_mae is not None:
+            fig = px.scatter(
+                df, x='perc_mae_qualificado', y='media_geral',
+                labels={'perc_mae_qualificado': '% Mães Ocupação Qualif.', 'media_geral': 'Nota Média'},
+                title=f"Correlação: r = {corr_ocup_mae:.3f}",
+                trendline="ols",
+                hover_data=['municipio', 'uf'] if 'municipio' in df.columns else None
+            )
+            fig.update_traces(marker=dict(size=8, opacity=0.6, color='purple'))
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Não foi possível gerar o gráfico")
 
 with tab3:
     st.header("💰 Renda Familiar vs Desempenho")
@@ -233,14 +263,19 @@ with tab3:
     )
     st.markdown(texto_renda)
     
-    fig = px.scatter(
-        df, x='perc_renda_alta', y='media_geral',
-        labels={'perc_renda_alta': '% Famílias Renda Alta', 'media_geral': 'Nota Média'},
-        title=f"Correlação: {corr_renda:.3f}" if corr_renda else "Correlação: N/A",
-        hover_data=['total_alunos']
-    )
-    fig.update_traces(marker=dict(size=10, opacity=0.6))
-    st.plotly_chart(fig, use_container_width=True)
+    if corr_renda is not None:
+        fig = px.scatter(
+            df, x='perc_renda_alta', y='media_geral',
+            labels={'perc_renda_alta': '% Famílias Renda Alta (>R$ 16.944)', 'media_geral': 'Nota Média ENEM'},
+            title=f"Correlação: r = {corr_renda:.3f}",
+            trendline="ols",
+            hover_data=['municipio', 'uf', 'total_alunos'] if 'municipio' in df.columns else ['total_alunos']
+        )
+        fig.update_traces(marker=dict(size=10, opacity=0.6, color='gold'))
+        fig.update_layout(height=500)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Não foi possível gerar o gráfico")
 
 with tab4:
     st.header("📊 Matriz de Correlação")
@@ -282,9 +317,9 @@ with tab4:
         corr, p, _ = calcular_correlacao(df[var], df['media_geral'], var, 'Geral')
         ranking.append({
             'Fator': rename.get(var, var),
-            'Correlação': corr,
-            'P-value': p,
-            'Sig.': '***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'
+            'Correlação': corr if corr is not None else 0.0,
+            'P-value': p if p is not None else 1.0,
+            'Sig.': '***' if p is not None and p < 0.001 else '**' if p is not None and p < 0.01 else '*' if p is not None and p < 0.05 else 'ns'
         })
     
     df_ranking = pd.DataFrame(ranking).sort_values('Correlação', ascending=False)

@@ -11,7 +11,8 @@ from plotly.subplots import make_subplots
 from scipy.stats import pearsonr, spearmanr
 import streamlit as st
 
-from src.utils.config import Config
+from ..utils.config import Config
+from ..utils.theme import get_plotly_theme
 
 
 def plot_correlation_heatmap(df: pd.DataFrame, columns: list = None, 

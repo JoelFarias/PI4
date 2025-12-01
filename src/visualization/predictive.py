@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from src.utils.config import Config
+from src.utils.theme import get_plotly_theme
 
 
 def plot_actual_vs_predicted(y_true: np.ndarray, y_pred: np.ndarray, title: str = None):

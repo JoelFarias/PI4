@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 
 from src.utils.config import Config
 from src.utils.constants import *
+from src.utils.theme import apply_minimal_theme, get_plotly_theme, wrap_text
 from src.database.queries import get_distribuicao_por_campo
 from src.data.loader import load_sample_data, get_data_quality_report
 from src.visualization.exploratory import plot_categorical_distribution, plot_missing_values
@@ -21,7 +22,9 @@ st.set_page_config(
     layout=Config.APP_LAYOUT
 )
 
-st.title("📊 Perfil dos Participantes")
+apply_minimal_theme()
+
+st.title("Perfil dos Participantes")
 st.markdown("Análise demográfica e socioeconômica dos participantes do ENEM 2024")
 st.markdown("---")
 
@@ -49,7 +52,19 @@ with tab1:
                 color_discrete_sequence=Config.COLOR_PALETTE,
                 hole=0.4
             )
-            fig.update_traces(textposition='inside', textinfo='percent+label')
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['margin', 'legend']},
+                height=400,
+                margin=dict(t=30, b=0, l=0, r=0)
+            )
+            fig.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                textfont_size=13,
+                pull=[0.03, 0.03],
+                hovertemplate='<b>%{label}</b><br>Quantidade: %{value:,.0f}<br>Percentual: %{percent:.1f}%<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -66,7 +81,18 @@ with tab1:
                 color='tp_cor_raca',
                 color_discrete_sequence=Config.COLOR_PALETTE
             )
-            fig.update_layout(showlegend=False, xaxis_title="", yaxis_title="Quantidade")
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin', 'legend']},
+                showlegend=False,
+                xaxis=dict(title="", tickangle=0, tickfont=dict(size=10)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=400,
+                margin=dict(t=30, b=80, l=60, r=30)
+            )
+            fig.update_traces(
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -84,8 +110,17 @@ with tab1:
                 y='quantidade',
                 color_discrete_sequence=[Config.COLOR_PRIMARY]
             )
-            fig.update_layout(xaxis_title="", yaxis_title="Quantidade")
-            fig.update_xaxes(tickangle=45)
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin']},
+                xaxis=dict(title="", tickangle=0, tickfont=dict(size=10)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=400,
+                margin=dict(t=30, b=80, l=60, r=30)
+            )
+            fig.update_traces(
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -100,6 +135,18 @@ with tab1:
                 values='quantidade',
                 names='tp_estado_civil',
                 color_discrete_sequence=Config.COLOR_PALETTE
+            )
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['margin', 'legend']},
+                height=400,
+                margin=dict(t=30, b=0, l=0, r=0)
+            )
+            fig.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                textfont_size=13,
+                hovertemplate='<b>%{label}</b><br>Quantidade: %{value:,.0f}<br>Percentual: %{percent:.1f}%<extra></extra>'
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -119,8 +166,21 @@ with tab1:
                 color='regiao_nome_prova',
                 color_discrete_sequence=Config.COLOR_PALETTE
             )
-            fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-            fig.update_layout(showlegend=False, xaxis_title="Região", yaxis_title="Quantidade")
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin', 'legend']},
+                showlegend=False,
+                xaxis=dict(title="Região", tickangle=0, tickfont=dict(size=10)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=400,
+                margin=dict(t=30, b=80, l=60, r=30)
+            )
+            fig.update_traces(
+                texttemplate='%{text:.1f}%',
+                textposition='outside',
+                textfont=dict(size=11),
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<br>Percentual: %{text:.1f}%<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
     
     with col2:
@@ -132,7 +192,17 @@ with tab1:
                 y='quantidade',
                 color_discrete_sequence=[Config.COLOR_SECONDARY]
             )
-            fig.update_layout(xaxis_title="UF", yaxis_title="Quantidade")
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin']},
+                xaxis=dict(title="UF", tickfont=dict(size=10)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=400,
+                margin=dict(t=30, b=50, l=60, r=30)
+            )
+            fig.update_traces(
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
@@ -146,14 +216,24 @@ with tab2:
         df_esc_pai = get_distribuicao_por_campo('q001', limit=10)
         if not df_esc_pai.empty:
             # Os valores já vêm como strings descritivas do banco
+            df_esc_pai['label_wrapped'] = df_esc_pai['q001'].apply(lambda x: wrap_text(str(x), 25))
             fig = px.bar(
                 df_esc_pai,
-                x='q001',
+                x='label_wrapped',
                 y='quantidade',
                 color_discrete_sequence=[Config.COLOR_PRIMARY]
             )
-            fig.update_layout(xaxis_title="", yaxis_title="Quantidade")
-            fig.update_xaxes(tickangle=45)
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin']},
+                xaxis=dict(title="", tickangle=0, tickfont=dict(size=9)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=450,
+                margin=dict(t=30, b=120, l=60, r=30)
+            )
+            fig.update_traces(
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -163,14 +243,24 @@ with tab2:
         df_esc_mae = get_distribuicao_por_campo('q002', limit=10)
         if not df_esc_mae.empty:
             # Os valores já vêm como strings descritivas do banco
+            df_esc_mae['label_wrapped'] = df_esc_mae['q002'].apply(lambda x: wrap_text(str(x), 25))
             fig = px.bar(
                 df_esc_mae,
-                x='q002',
+                x='label_wrapped',
                 y='quantidade',
                 color_discrete_sequence=[Config.COLOR_SECONDARY]
             )
-            fig.update_layout(xaxis_title="", yaxis_title="Quantidade")
-            fig.update_xaxes(tickangle=45)
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin']},
+                xaxis=dict(title="", tickangle=0, tickfont=dict(size=9)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=450,
+                margin=dict(t=30, b=120, l=60, r=30)
+            )
+            fig.update_traces(
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -190,6 +280,18 @@ with tab2:
                 names='label',
                 color_discrete_sequence=Config.COLOR_PALETTE
             )
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['margin', 'legend']},
+                height=400,
+                margin=dict(t=30, b=0, l=0, r=0)
+            )
+            fig.update_traces(
+                textposition='inside',
+                textinfo='percent',
+                textfont_size=12,
+                hovertemplate='<b>%{label}</b><br>Quantidade: %{value:,.0f}<br>Percentual: %{percent:.1f}%<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -206,6 +308,18 @@ with tab2:
                 names='label',
                 color_discrete_sequence=Config.COLOR_PALETTE
             )
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['margin', 'legend']},
+                height=400,
+                margin=dict(t=30, b=0, l=0, r=0)
+            )
+            fig.update_traces(
+                textposition='inside',
+                textinfo='percent',
+                textfont_size=12,
+                hovertemplate='<b>%{label}</b><br>Quantidade: %{value:,.0f}<br>Percentual: %{percent:.1f}%<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -214,15 +328,24 @@ with tab2:
     df_renda = get_distribuicao_por_campo('q007', limit=20)
     if not df_renda.empty:
         # Os valores já vêm como strings descritivas do banco
+        df_renda['label_wrapped'] = df_renda['q007'].apply(lambda x: wrap_text(str(x), 30))
         fig = px.bar(
             df_renda,
-            x='q007',
+            x='label_wrapped',
             y='quantidade',
-            color='percentual',
-            color_continuous_scale='Viridis'
+            color_discrete_sequence=Config.COLOR_PALETTE
         )
-        fig.update_layout(xaxis_title="Faixa de Renda", yaxis_title="Quantidade")
-        fig.update_xaxes(tickangle=45)
+        theme = get_plotly_theme()
+        fig.update_layout(
+            **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin']},
+            xaxis=dict(title="Faixa de Renda", tickangle=0, tickfont=dict(size=8)),
+            yaxis=dict(title="Quantidade", tickformat=","),
+            height=500,
+            margin=dict(t=30, b=150, l=60, r=30)
+        )
+        fig.update_traces(
+            hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("📊 Dados não disponíveis")
@@ -244,7 +367,18 @@ with tab3:
                 color_discrete_sequence=Config.COLOR_PALETTE,
                 hole=0.4
             )
-            fig.update_traces(textposition='inside', textinfo='percent')
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['margin', 'legend']},
+                height=400,
+                margin=dict(t=30, b=0, l=0, r=0)
+            )
+            fig.update_traces(
+                textposition='inside',
+                textinfo='percent',
+                textfont_size=14,
+                hovertemplate='<b>%{label}</b><br>Quantidade: %{value:,.0f}<br>Percentual: %{percent:.1f}%<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
             
             # Mostrar legenda abaixo
@@ -265,8 +399,17 @@ with tab3:
                 y='quantidade',
                 color_discrete_sequence=[Config.COLOR_SUCCESS]
             )
-            fig.update_layout(xaxis_title="", yaxis_title="Quantidade")
-            fig.update_xaxes(tickangle=45)
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin']},
+                xaxis=dict(title="", tickangle=0, tickfont=dict(size=10)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=400,
+                margin=dict(t=30, b=80, l=60, r=30)
+            )
+            fig.update_traces(
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -284,8 +427,17 @@ with tab3:
                 y='quantidade',
                 color_discrete_sequence=[Config.COLOR_WARNING]
             )
-            fig.update_layout(xaxis_title="Ano", yaxis_title="Quantidade")
-            fig.update_xaxes(tickangle=45)
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin']},
+                xaxis=dict(title="Ano", tickangle=0, tickfont=dict(size=10)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=400,
+                margin=dict(t=30, b=80, l=60, r=30)
+            )
+            fig.update_traces(
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")
@@ -301,7 +453,17 @@ with tab3:
                 y='quantidade',
                 color_discrete_sequence=[Config.COLOR_PRIMARY]
             )
-            fig.update_layout(xaxis_title="", yaxis_title="Quantidade")
+            theme = get_plotly_theme()
+            fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin']},
+                xaxis=dict(title="", tickangle=0, tickfont=dict(size=10)),
+                yaxis=dict(title="Quantidade", tickformat=","),
+                height=400,
+                margin=dict(t=30, b=80, l=60, r=30)
+            )
+            fig.update_traces(
+                hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,.0f}<extra></extra>'
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📊 Dados não disponíveis")

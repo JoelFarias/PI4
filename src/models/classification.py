@@ -4,6 +4,7 @@ Modelos de Classificação para categorizar desempenho no ENEM
 
 import pandas as pd
 import numpy as np
+import logging
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -13,7 +14,10 @@ from sklearn.metrics import (
     confusion_matrix, classification_report, roc_auc_score, roc_curve
 )
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-import xgboost as xgb
+try:
+    import xgboost as xgb
+except Exception:
+    xgb = None  # xgboost é opcional; checar antes de usar
 import streamlit as st
 
 
@@ -63,17 +67,23 @@ class ClassificationModel:
                 random_state=self.random_state
             ),
             'xgboost': xgb.XGBClassifier(
-                n_estimators=100,
-                max_depth=6,
-                learning_rate=0.1,
-                random_state=self.random_state,
-                n_jobs=-1
-            )
+                    n_estimators=100,
+                    max_depth=6,
+                    learning_rate=0.1,
+                    random_state=self.random_state,
+                    n_jobs=-1
+                ) if xgb is not None else None
         }
-        
-        self.model = models.get(self.model_type, LogisticRegression())
+
+        # lidar com caso onde xgboost não está instalado
+        candidate = models.get(self.model_type)
+        if candidate is None:
+            if self.model_type == 'xgboost' and xgb is None:
+                raise ImportError("xgboost não está instalado. Instale com 'pip install xgboost' ou escolha outro model_type")
+            self.model = LogisticRegression()
+        else:
+            self.model = candidate
     
-    @st.cache_data(ttl=3600)
     def train(_self, X_train: pd.DataFrame, y_train: pd.Series,
               scale_features: bool = True):
         """
@@ -131,10 +141,10 @@ class ClassificationModel:
         y_pred_encoded = self.label_encoder.transform(y_pred)
         
         self.metrics = {
-            'Accuracy': accuracy_score(y_test, y_pred),
-            'Precision': precision_score(y_test_encoded, y_pred_encoded, average=average, zero_division=0),
-            'Recall': recall_score(y_test_encoded, y_pred_encoded, average=average, zero_division=0),
-            'F1-Score': f1_score(y_test_encoded, y_pred_encoded, average=average, zero_division=0)
+            'accuracy': accuracy_score(y_test, y_pred),
+            'precision': precision_score(y_test_encoded, y_pred_encoded, average=average, zero_division=0),
+            'recall': recall_score(y_test_encoded, y_pred_encoded, average=average, zero_division=0),
+            'f1': f1_score(y_test_encoded, y_pred_encoded, average=average, zero_division=0)
         }
         
         if len(self.class_names) == 2:
@@ -244,7 +254,13 @@ def prepare_classification_data(df: pd.DataFrame, target_col: str,
                                   feature_cols: list, n_classes: int = 3,
                                   test_size: float = 0.2, random_state: int = 42):
     """
-    Prepara dados para classificação
+    Prepara dados para classificação com encoding automático de variáveis categóricas
+    e princípios estatísticos avançados:
+    - Detecção automática de tipos (numérico vs categórico)
+    - Label Encoding para variáveis ordinais
+    - Categorização robusta do target com qcut e fallbacks
+    - Validação de distribuição das classes
+    - Amostra estratificada
     
     Args:
         df: DataFrame com os dados
@@ -257,24 +273,85 @@ def prepare_classification_data(df: pd.DataFrame, target_col: str,
     Returns:
         X_train, X_test, y_train, y_test, class_labels
     """
-    df_clean = df[feature_cols + [target_col]].dropna()
+    from sklearn.preprocessing import LabelEncoder
     
-    percentiles = np.linspace(0, 100, n_classes + 1)
-    bins = [df_clean[target_col].quantile(p/100) for p in percentiles]
+    # Criar cópia para não modificar original
+    df_work = df[feature_cols + [target_col]].copy()
     
+    # Remover NaNs
+    df_clean = df_work.dropna()
+    
+    if len(df_clean) < 100:
+        raise ValueError(f"Amostra muito pequena após remoção de NaNs: {len(df_clean)} registros. Mínimo: 100")
+    
+    # Converter target para float para evitar problemas com Decimal
+    df_clean[target_col] = df_clean[target_col].astype(float)
+    
+    # Definir labels das classes
     if n_classes == 3:
         labels = ['Baixo', 'Médio', 'Alto']
     elif n_classes == 2:
         labels = ['Baixo', 'Alto']
     else:
         labels = [f'Classe_{i+1}' for i in range(n_classes)]
+
+    # Categorização robusta do target usando qcut com fallbacks
+    try:
+        df_clean['target_class'] = pd.qcut(df_clean[target_col], q=n_classes, labels=labels, duplicates='drop')
+    except ValueError:
+        # Fallback 1: tentar criar bins a partir dos percentis únicos
+        percentiles = np.linspace(0, 100, n_classes + 1)
+        bins = np.unique([df_clean[target_col].quantile(p/100) for p in percentiles])
+
+        if len(bins) - 1 == n_classes:
+            df_clean['target_class'] = pd.cut(df_clean[target_col], bins=bins, labels=labels, include_lowest=True)
+        else:
+            # Fallback 2: usar rank para garantir distribuição de classes
+            ranks = df_clean[target_col].rank(method='first')
+            df_clean['target_class'] = pd.cut(ranks, bins=n_classes, labels=labels, include_lowest=True)
     
-    df_clean['target_class'] = pd.cut(df_clean[target_col], bins=bins, 
-                                        labels=labels, include_lowest=True)
-    
-    X = df_clean[feature_cols]
+    # Separar features
+    X = df_clean[feature_cols].copy()
     y = df_clean['target_class']
     
+    # Detectar e codificar variáveis categóricas
+    label_encoders = {}
+    
+    for col in X.columns:
+        # Se a coluna é string/object, aplicar Label Encoding
+        if X[col].dtype == 'object' or X[col].dtype.name == 'category':
+            le = LabelEncoder()
+            X[col] = le.fit_transform(X[col].astype(str))
+            label_encoders[col] = le
+        # Se for numérica mas com poucos valores únicos, pode ser categórica ordinal
+        elif X[col].dtype in ['int64', 'float64']:
+            n_unique = X[col].nunique()
+            # Se tem menos de 20 valores únicos, tratar como categórica ordinal
+            if n_unique < 20:
+                # Garantir que está como inteiro
+                X[col] = X[col].fillna(X[col].median()).astype(int)
+    
+    # Validação estatística: verificar variância mínima e remover colunas com variância zero
+    zero_var_cols = []
+    for col in X.columns:
+        if X[col].std() == 0:
+            zero_var_cols.append(col)
+    
+    if zero_var_cols:
+        logging.warning(f"⚠️ Removendo {len(zero_var_cols)} coluna(s) com variância zero: {zero_var_cols}")
+        X = X.drop(columns=zero_var_cols)
+        
+        if X.shape[1] == 0:
+            raise ValueError("Todas as variáveis têm variância zero. Não é possível treinar modelo.")
+    
+    # Validação: verificar se temos pelo menos 30 amostras por classe (regra estatística)
+    class_counts = y.value_counts()
+    min_samples = class_counts.min()
+    
+    if min_samples < 30:
+        raise ValueError(f"Distribuição de classes desbalanceada. Classe com menos amostras: {min_samples}. Mínimo recomendado: 30 por classe.")
+    
+    # Split estratificado
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
@@ -307,7 +384,10 @@ def compare_classifiers(X_train: pd.DataFrame, X_test: pd.DataFrame,
         
         results.append({
             'Modelo': model_type,
-            **metrics
+            'Accuracy': metrics['accuracy'],
+            'Precision': metrics['precision'],
+            'Recall': metrics['recall'],
+            'F1-Score': metrics['f1']
         })
     
     return pd.DataFrame(results).sort_values('F1-Score', ascending=False)

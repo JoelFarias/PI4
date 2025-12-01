@@ -53,21 +53,37 @@ class ClusteringModel:
         
         self.model = models.get(self.model_type, KMeans(n_clusters=self.n_clusters))
     
-    @st.cache_data(ttl=3600)
     def fit(_self, X: pd.DataFrame, scale_features: bool = True):
         """
-        Treina o modelo de clustering
+        Treina o modelo de clustering com encoding automático de variáveis categóricas
         
         Args:
-            X: Features
+            X: Features (pode conter variáveis categóricas)
             scale_features: Se True, normaliza as features
         """
-        _self.feature_names = X.columns.tolist()
+        from sklearn.preprocessing import LabelEncoder
+        
+        # Criar cópia e codificar variáveis categóricas
+        X_encoded = X.copy()
+        
+        # Converter todas as colunas numéricas para float (evitar erros com Decimal)
+        for col in X_encoded.columns:
+            if X_encoded[col].dtype == 'object' or X_encoded[col].dtype.name == 'category':
+                le = LabelEncoder()
+                X_encoded[col] = le.fit_transform(X_encoded[col].astype(str))
+            else:
+                # Converter para float64 (resolve problemas com Decimal do PostgreSQL)
+                X_encoded[col] = X_encoded[col].astype(float)
+                n_unique = X_encoded[col].nunique()
+                if n_unique < 20:
+                    X_encoded[col] = X_encoded[col].fillna(X_encoded[col].median()).astype(int)
+        
+        _self.feature_names = X_encoded.columns.tolist()
         
         if scale_features:
-            X_scaled = _self.scaler.fit_transform(X)
+            X_scaled = _self.scaler.fit_transform(X_encoded)
         else:
-            X_scaled = X.values
+            X_scaled = X_encoded.values
         
         _self.labels_ = _self.model.fit_predict(X_scaled)
         
@@ -228,10 +244,11 @@ class ClusteringModel:
 def find_optimal_k(X: pd.DataFrame, k_range: range = range(2, 11),
                    scale_features: bool = True, random_state: int = 42):
     """
-    Método do cotovelo para encontrar k ótimo
+    Método do cotovelo para encontrar k ótimo com encoding automático
+    de variáveis categóricas
     
     Args:
-        X: Features
+        X: Features (pode conter variáveis categóricas)
         k_range: Range de valores de k para testar
         scale_features: Se True, normaliza as features
         random_state: Seed
@@ -239,12 +256,29 @@ def find_optimal_k(X: pd.DataFrame, k_range: range = range(2, 11),
     Returns:
         DataFrame com métricas para cada k
     """
+    from sklearn.preprocessing import LabelEncoder
+    
+    # Criar cópia e codificar variáveis categóricas
+    X_encoded = X.copy()
+    
+    # Converter todas as colunas numéricas para float (evitar erros com Decimal)
+    for col in X_encoded.columns:
+        if X_encoded[col].dtype == 'object' or X_encoded[col].dtype.name == 'category':
+            le = LabelEncoder()
+            X_encoded[col] = le.fit_transform(X_encoded[col].astype(str))
+        else:
+            # Converter para float64 (resolve problemas com Decimal do PostgreSQL)
+            X_encoded[col] = X_encoded[col].astype(float)
+            n_unique = X_encoded[col].nunique()
+            if n_unique < 20:
+                X_encoded[col] = X_encoded[col].fillna(X_encoded[col].median()).astype(int)
+    
     scaler = StandardScaler()
     
     if scale_features:
-        X_scaled = scaler.fit_transform(X)
+        X_scaled = scaler.fit_transform(X_encoded)
     else:
-        X_scaled = X.values
+        X_scaled = X_encoded.values
     
     results = []
     

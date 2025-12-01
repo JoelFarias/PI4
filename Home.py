@@ -4,7 +4,7 @@ Página Inicial
 
 Autor: Joel C.
 Instituição: IESB
-Disciplina: PE-4
+Disciplina: PI-4
 Data: Outubro 2025
 """
 
@@ -21,6 +21,7 @@ from src.utils.constants import (
     NOMES_PROVAS,
     REGIOES,
 )
+from src.utils.theme import apply_minimal_theme, get_plotly_theme, wrap_text
 from src.database.connection import test_database_connection
 from src.database.queries import (
     get_notas_estatisticas,
@@ -34,124 +35,40 @@ from src.database.queries import (
 
 st.set_page_config(
     page_title=Config.APP_TITLE,
-    page_icon=Config.APP_ICON,
+    page_icon="📊",
     layout=Config.APP_LAYOUT,
     initial_sidebar_state="expanded",
 )
 
-
-# ==============================================================================
-# ESTILO CUSTOMIZADO
-# ==============================================================================
-
-st.markdown("""
-    <style>
-    .main-header {
-        font-size: 3rem;
-        font-weight: bold;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .sub-header {
-        font-size: 1.5rem;
-        color: #666;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
-    }
-    .info-box {
-        background-color: #e8f4f8;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #17becf;
-        margin: 1rem 0;
-    }
-    .warning-box {
-        background-color: #fff3cd;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #ffc107;
-        margin: 1rem 0;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-
-# ==============================================================================
-# SIDEBAR - INFORMAÇÕES E NAVEGAÇÃO
-# ==============================================================================
-
-with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/000000/graduation-cap.png", width=80)
-    st.title("📊 Dashboard ENEM 2024")
-    st.markdown("---")
-    
-    # Informações do projeto
-    st.markdown("### 📌 Informações")
-    st.info("""
-    **Instituição:** IESB  
-    **Disciplina:** PE-4  
-    **Autor:** Joel C.  
-    **Data:** Outubro 2025
-    """)
-    
-    st.markdown("---")
-    
-    # Status da conexão
-    st.markdown("### 🔌 Status do Sistema")
-    
-    with st.spinner("Verificando conexão..."):
-        sucesso, mensagem = test_database_connection()
-    
-    if sucesso:
-        st.success(mensagem)
-        st.metric("Status", "Conectado", delta="Operacional")
-    else:
-        st.error(mensagem)
-        st.metric("Status", "Desconectado", delta="Erro")
-    
-    st.markdown("---")
-    
-    # Navegação rápida
-    st.markdown("### 🗺️ Navegação Rápida")
-    st.markdown("""
-    Explore as diferentes páginas do dashboard:
-    
-    - 📊 **Perfil dos Participantes**
-    - 📈 **Análise de Desempenho**
-    - 🔗 **Correlação com Fatores**
-    - 🤖 **Modelos Preditivos**
-    - 🗺️ **Análise Geográfica**
-    - 💡 **Insights e Conclusões**
-    """)
-    
-    st.markdown("---")
-    
-    # Informações técnicas
-    if st.checkbox("🔧 Informações Técnicas"):
-        st.markdown("**Configurações:**")
-        st.code(f"""
-Banco: {Config.get_database_config()['database']}
-Cache TTL: {Config.CACHE_TTL}s
-Ambiente: {'Produção' if Config.is_production() else 'Desenvolvimento'}
-        """)
+# Aplicar tema minimalista
+apply_minimal_theme()
 
 
 # ==============================================================================
 # CABEÇALHO PRINCIPAL
 # ==============================================================================
 
-st.markdown('<div class="main-header">📊 Dashboard ENEM 2024</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="sub-header">Análise de Correlação entre Fatores Familiares e Desempenho Acadêmico</div>',
-    unsafe_allow_html=True
-)
+st.title("Dashboard ENEM 2024")
+st.markdown("Análise de Correlação entre Fatores Familiares e Desempenho Acadêmico em Nível Municipal")
+st.caption("Sistema de análise ecológica baseado em dados agregados por município")
+
+# AVISO IMPORTANTE SOBRE NÍVEL DE ANÁLISE
+st.markdown("""
+<div class="warning-box">
+    <h4>⚠️ IMPORTANTE: Análise em Nível Municipal (Análise Ecológica)</h4>
+    <p>Este dashboard realiza <strong>análise ecológica</strong> - os dados são agregados por <strong>MUNICÍPIO</strong>, não por participante individual.</p>
+    <p><strong>Por quê?</strong> As tabelas de dados socioeconômicos e resultados do ENEM estão separadas e só podem ser relacionadas através do município de prova.</p>
+    <p><strong>O que isso significa?</strong></p>
+    <ul>
+        <li>Cada "observação" representa um município (~5.570 municípios)</li>
+        <li>Features são <strong>percentuais/médias municipais</strong> (ex: "% de pais com ensino superior no município")</li>
+        <li>Target é a <strong>média de desempenho do município</strong></li>
+        <li>Correlações encontradas são entre características dos municípios, NÃO entre indivíduos</li>
+    </ul>
+    <p><strong>⚠️ Falácia Ecológica:</strong> Correlações no nível municipal NÃO implicam que o mesmo padrão exista no nível individual. 
+    Exemplo: "Municípios com mais pais universitários têm melhor desempenho" ≠ "Alunos com pais universitários têm melhor desempenho".</p>
+</div>
+""", unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -315,11 +232,11 @@ with st.spinner("Carregando estatísticas gerais..."):
             # Preparar dados para o gráfico
             areas = ['CN', 'CH', 'LC', 'MT', 'Redação']
             medias = [
-                stats_dict['cn_media'],
-                stats_dict['ch_media'],
-                stats_dict['lc_media'],
-                stats_dict['mt_media'],
-                stats_dict['red_media']
+                float(stats_dict['cn_media']),
+                float(stats_dict['ch_media']),
+                float(stats_dict['lc_media']),
+                float(stats_dict['mt_media']),
+                float(stats_dict['red_media'])
             ]
             
             # Criar gráfico de barras
@@ -338,18 +255,29 @@ with st.spinner("Carregando estatísticas gerais..."):
             fig.add_hline(
                 y=stats_dict['media_geral'],
                 line_dash="dash",
-                line_color="red",
+                line_color="#ef4444",
                 annotation_text=f"Média Geral: {stats_dict['media_geral']:.1f}",
                 annotation_position="right"
             )
             
+            theme = get_plotly_theme()
             fig.update_layout(
+                **{k: v for k, v in theme.items() if k not in ['title', 'margin', 'xaxis', 'yaxis', 'hovermode']},
                 title="Média por Área de Conhecimento",
-                xaxis_title="Área",
-                yaxis_title="Média",
-                height=400,
+                xaxis=dict(
+                    title="Área de Conhecimento",
+                    tickangle=0,
+                    tickfont=dict(size=12)
+                ),
+                yaxis=dict(
+                    title="Pontuação Média",
+                    range=[0, max(medias) * 1.15],
+                    tickformat=".1f"
+                ),
+                height=450,
                 showlegend=False,
-                hovermode='x unified'
+                hovermode='x unified',
+                margin=dict(t=50, b=50, l=50, r=50)
             )
             
             st.plotly_chart(fig, use_container_width=True)
@@ -394,10 +322,27 @@ with col1:
                 fig.update_traces(
                     textposition='inside',
                     textinfo='percent+label',
-                    hovertemplate='<b>%{label}</b><br>Quantidade: %{value:,}<br>Percentual: %{percent}<extra></extra>'
+                    textfont_size=14,
+                    pull=[0.05, 0.05],
+                    hovertemplate='<b>%{label}</b><br>' +
+                                  'Quantidade: %{value:,.0f}<br>' +
+                                  'Percentual: %{percent:.1f}%<extra></extra>'
                 )
                 
-                fig.update_layout(height=350)
+                theme = get_plotly_theme()
+                fig.update_layout(
+                    **{k: v for k, v in theme.items() if k not in ['margin', 'legend']},
+                    height=400,
+                    margin=dict(t=30, b=0, l=0, r=0),
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=-0.15,
+                        xanchor="center",
+                        x=0.5
+                    )
+                )
                 
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -426,14 +371,28 @@ with col2:
                 fig.update_traces(
                     texttemplate='%{text:.1f}%',
                     textposition='outside',
-                    hovertemplate='<b>%{x}</b><br>Quantidade: %{y:,}<extra></extra>'
+                    textfont=dict(size=12, color='#1f2937'),
+                    hovertemplate='<b>%{x}</b><br>' +
+                                  'Participantes: %{y:,.0f}<br>' +
+                                  'Percentual: %{text:.1f}%<extra></extra>'
                 )
                 
+                theme = get_plotly_theme()
                 fig.update_layout(
+                    **{k: v for k, v in theme.items() if k not in ['xaxis', 'yaxis', 'margin', 'legend']},
                     showlegend=False,
-                    xaxis_title="Região",
-                    yaxis_title="Quantidade",
-                    height=350
+                    xaxis=dict(
+                        title="Região",
+                        tickangle=0,
+                        tickfont=dict(size=11)
+                    ),
+                    yaxis=dict(
+                        title="Número de Participantes",
+                        tickformat=",",
+                        separatethousands=True
+                    ),
+                    height=400,
+                    margin=dict(t=30, b=80, l=60, r=30)
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
@@ -505,7 +464,7 @@ with col2:
     st.markdown("""
     **🏫 Instituição:**  
     IESB - Centro Universitário  
-    Disciplina: PE-4
+    Disciplina: PI-4
     """)
 
 with col3:
@@ -516,7 +475,3 @@ with col3:
     """)
 
 st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: #666;'>Desenvolvido com ❤️ usando Streamlit e Python 🐍</div>",
-    unsafe_allow_html=True
-)

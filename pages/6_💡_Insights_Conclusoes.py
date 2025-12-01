@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from src.utils.config import Config
+from src.utils.theme import apply_minimal_theme, get_plotly_theme
 from src.database.queries import get_notas_estatisticas
 
 
@@ -18,7 +19,9 @@ st.set_page_config(
     layout=Config.APP_LAYOUT
 )
 
-st.title("💡 Insights e Conclusões")
+apply_minimal_theme()
+
+st.title("Insights e Conclusões")
 st.markdown("**Resumo Executivo - Análise ENEM 2024: Fatores Familiares e Desempenho**")
 st.markdown("---")
 

@@ -11,6 +11,7 @@ from typing import Optional, List, Dict
 
 from ..utils.config import Config
 from ..utils.constants import NOMES_PROVAS, SIGLAS_PROVAS
+from ..utils.theme import get_plotly_theme
 
 
 def plot_distribution(
@@ -32,6 +33,7 @@ def plot_distribution(
     )
     
     fig.update_layout(
+        **get_plotly_theme(),
         height=Config.DEFAULT_CHART_HEIGHT,
         showlegend=False,
         hovermode='x unified'

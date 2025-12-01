@@ -30,9 +30,12 @@ def get_participantes_sample(
     order_by: str = None
 ) -> pd.DataFrame:
     """
-    Retorna amostra de participantes COM NOTAS (JOIN entre tabelas).
-    NOTA: Faz JOIN entre PARTICIPANTES (dados socioeconômicos/demográficos) 
-    e RESULTADOS (notas). Usa TABLESAMPLE para melhor performance.
+    [DEPRECADO] Esta função está obsoleta. Use get_dados_municipio_completo() 
+    para dados agregados por município.
+    
+    AVISO: JOIN entre PARTICIPANTES e RESULTADOS por município gera duplicatas
+    pois não há relação direta por participante individual (nu_inscricao).
+    As tabelas só podem ser unidas após agregação por município.
     
     Args:
         limit: Número máximo de registros
@@ -534,6 +537,276 @@ def get_media_por_municipio(top_n: int = 100, order: str = 'DESC') -> pd.DataFra
         
     except Exception as e:
         logger.error(f"Erro ao carregar média por município: {e}")
+        return pd.DataFrame()
+
+
+# ==============================================================================
+# QUERIES DE AGREGAÇÃO MUNICIPAL
+# ==============================================================================
+
+@st.cache_data(ttl=Config.CACHE_TTL, show_spinner="Carregando dados municipais completos...")
+def get_dados_municipio_completo(min_participantes: int = 30) -> pd.DataFrame:
+    """
+    Retorna dados completos agregados por município.
+    
+    IMPORTANTE: Esta função agrega corretamente as tabelas PARTICIPANTES 
+    (dados socioeconômicos) e RESULTADOS (notas) SEPARADAMENTE por município,
+    e depois faz JOIN. Isso é necessário porque as tabelas não têm relação
+    direta por participante individual.
+    
+    Args:
+        min_participantes: Número mínimo de participantes por município
+        
+    Returns:
+        DataFrame com dados agregados por município incluindo:
+        - co_municipio_prova, no_municipio, sg_uf, regiao
+        - total_participantes
+        - Percentuais de características socioeconômicas
+        - Médias de notas por prova
+    """
+    try:
+        query = f"""
+        WITH socio_agg AS (
+            SELECT 
+                co_municipio_prova,
+                COUNT(*) as total_participantes_socio,
+                -- Escolaridade (valores exatos do banco - SEM períodos finais)
+                ROUND(100.0 * SUM(CASE WHEN q001 IN ('Completou a Faculdade, mas não completou a Pós-graduação', 'Completou a Pós-graduação') THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) as perc_pai_ensino_superior,
+                ROUND(100.0 * SUM(CASE WHEN q002 IN ('Completou a Faculdade, mas não completou a Pós-graduação', 'Completou a Pós-graduação') THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) as perc_mae_ensino_superior,
+                ROUND(100.0 * SUM(CASE WHEN q001 IN ('Completou a Faculdade, mas não completou a Pós-graduação', 'Completou a Pós-graduação') OR q002 IN ('Completou a Faculdade, mas não completou a Pós-graduação', 'Completou a Pós-graduação') THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) as perc_pais_ensino_superior,
+                -- Ocupação (Grupos 4 e 5 = qualificados)
+                ROUND(100.0 * SUM(CASE WHEN q003 LIKE 'Grupo 4%' OR q003 LIKE 'Grupo 5%' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) as perc_pai_ocupacao_qualificada,
+                ROUND(100.0 * SUM(CASE WHEN q004 LIKE 'Grupo 4%' OR q004 LIKE 'Grupo 5%' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) as perc_mae_ocupacao_qualificada,
+                -- Renda (campo q007 - faixas altas: acima de R$ 14.120,00)
+                ROUND(100.0 * SUM(CASE WHEN q007 IN (
+                    'De R$ 14.120,01 até R$ 16.944,00',
+                    'De R$ 16.944,01 até R$ 21.180,00',
+                    'De R$ 21.180,01 até R$ 28.240,00',
+                    'Acima de R$ 28.240,00'
+                ) THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) as perc_renda_alta,
+                ROUND(100.0 * SUM(CASE WHEN q007 IN (
+                    'Nenhuma renda',
+                    'Até R$ 1.412,00',
+                    'De R$ 1.412,01 até R$ 2.118,00',
+                    'De R$ 2.118,01 até R$ 2.824,00'
+                ) THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) as perc_renda_baixa,
+                -- Média de pessoas na residência
+                ROUND(AVG(CASE WHEN q005 ~ '^[0-9]$' THEN q005::INTEGER ELSE NULL END), 2) as media_pessoas_residencia,
+                -- Escola (tp_dependencia_adm_esc está NULL - não usamos filtros)
+                0.0 as perc_escola_privada,
+                0.0 as perc_escola_publica,
+                -- Demografia
+                ROUND(100.0 * SUM(CASE WHEN tp_sexo = 'F' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) as perc_feminino,
+                ROUND(AVG(idade_calculada), 1) as idade_media
+            FROM {TABLE_PARTICIPANTES}
+            WHERE co_municipio_prova IS NOT NULL
+            GROUP BY co_municipio_prova
+        ),
+        desempenho_agg AS (
+            SELECT 
+                co_municipio_prova,
+                no_municipio_prova,
+                sg_uf_prova,
+                regiao_nome_prova,
+                COUNT(*) as total_participantes_notas,
+                ROUND(AVG(nota_cn_ciencias_da_natureza), 2) as media_cn,
+                ROUND(AVG(nota_ch_ciencias_humanas), 2) as media_ch,
+                ROUND(AVG(nota_lc_linguagens_e_codigos), 2) as media_lc,
+                ROUND(AVG(nota_mt_matematica), 2) as media_mt,
+                ROUND(AVG(nota_redacao), 2) as media_redacao,
+                ROUND(AVG(nota_media_5_notas), 2) as media_geral
+            FROM {TABLE_RESULTADOS}
+            WHERE co_municipio_prova IS NOT NULL
+                AND nota_media_5_notas IS NOT NULL
+            GROUP BY co_municipio_prova, no_municipio_prova, sg_uf_prova, regiao_nome_prova
+        )
+        SELECT 
+            d.co_municipio_prova,
+            d.no_municipio_prova as municipio,
+            d.sg_uf_prova as uf,
+            d.regiao_nome_prova as regiao,
+            GREATEST(COALESCE(s.total_participantes_socio, 0), d.total_participantes_notas) as total_participantes,
+            -- Dados socioeconômicos (com COALESCE para valores NULL)
+            COALESCE(s.perc_pai_ensino_superior, 0.0) as perc_pai_ensino_superior,
+            COALESCE(s.perc_mae_ensino_superior, 0.0) as perc_mae_ensino_superior,
+            COALESCE(s.perc_pais_ensino_superior, 0.0) as perc_pais_ensino_superior,
+            COALESCE(s.perc_pai_ocupacao_qualificada, 0.0) as perc_pai_ocupacao_qualificada,
+            COALESCE(s.perc_mae_ocupacao_qualificada, 0.0) as perc_mae_ocupacao_qualificada,
+            COALESCE(s.perc_renda_alta, 0.0) as perc_renda_alta,
+            COALESCE(s.perc_renda_baixa, 0.0) as perc_renda_baixa,
+            COALESCE(s.media_pessoas_residencia, 0.0) as media_pessoas_residencia,
+            COALESCE(s.perc_escola_privada, 0.0) as perc_escola_privada,
+            COALESCE(s.perc_escola_publica, 0.0) as perc_escola_publica,
+            COALESCE(s.perc_feminino, 0.0) as perc_feminino,
+            COALESCE(s.idade_media, 0.0) as idade_media,
+            -- Dados de desempenho
+            d.media_cn,
+            d.media_ch,
+            d.media_lc,
+            d.media_mt,
+            d.media_redacao,
+            d.media_geral,
+            -- Coordenadas
+            m.latitude,
+            m.longitude
+        FROM desempenho_agg d
+        LEFT JOIN socio_agg s ON d.co_municipio_prova = s.co_municipio_prova
+        LEFT JOIN {TABLE_MUNICIPIOS} m ON d.co_municipio_prova = m.codigo_municipio_dv
+        WHERE d.total_participantes_notas >= {min_participantes}
+        ORDER BY d.media_geral DESC
+        """
+        
+        with DatabaseConnection.get_cursor() as cur:
+            cur.execute(query)
+            columns_names = [desc[0] for desc in cur.description]
+            data = cur.fetchall()
+        
+        logger.info(f"Query executada: {len(data)} linhas retornadas")
+        
+        df = pd.DataFrame(data, columns=columns_names)
+        
+        # Converter colunas numéricas
+        numeric_cols = [col for col in df.columns if col not in ['co_municipio_prova', 'municipio', 'uf', 'regiao']]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        logger.info(f"Carregados {len(df)} municípios com dados completos (min_participantes={min_participantes})")
+        return df
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar dados municipais completos: {e}", exc_info=True)
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=Config.CACHE_TTL, show_spinner="Carregando dados socioeconômicos agregados...")
+def get_participantes_aggregated(
+    min_participantes: int = 30,
+    group_by: List[str] = None
+) -> pd.DataFrame:
+    """
+    Retorna dados socioeconômicos agregados por município ou outras dimensões.
+    
+    Args:
+        min_participantes: Número mínimo de participantes
+        group_by: Lista de campos para agrupar (padrão: ['co_municipio_prova'])
+        
+    Returns:
+        DataFrame com dados agregados
+    """
+    try:
+        if group_by is None:
+            group_by = ['co_municipio_prova', 'sg_uf_prova', 'regiao_nome_prova']
+        
+        group_cols = ', '.join(group_by)
+        
+        query = f"""
+        SELECT 
+            {group_cols},
+            COUNT(*) as total_participantes,
+            -- Escolaridade (usando textos completos)
+            SUM(CASE WHEN q001 IN ('Completou a Faculdade, mas não completou a Pós-graduação', 'Completou a Pós-graduação') THEN 1 ELSE 0 END) as pai_superior_count,
+            SUM(CASE WHEN q002 IN ('Completou a Faculdade, mas não completou a Pós-graduação', 'Completou a Pós-graduação') THEN 1 ELSE 0 END) as mae_superior_count,
+            ROUND(100.0 * SUM(CASE WHEN q001 IN ('Completou a Faculdade, mas não completou a Pós-graduação', 'Completou a Pós-graduação') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_pai_superior,
+            ROUND(100.0 * SUM(CASE WHEN q002 IN ('Completou a Faculdade, mas não completou a Pós-graduação', 'Completou a Pós-graduação') THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_mae_superior,
+            -- Ocupação (usando textos completos)
+            ROUND(100.0 * SUM(CASE WHEN q003 LIKE 'Grupo 4%' OR q003 LIKE 'Grupo 5%' THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_pai_qualificado,
+            ROUND(100.0 * SUM(CASE WHEN q004 LIKE 'Grupo 4%' OR q004 LIKE 'Grupo 5%' THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_mae_qualificado,
+            -- Renda (campo q007 - faixas altas)
+            ROUND(100.0 * SUM(CASE WHEN q007 IN (
+                'De R$ 16.944,01 até R$ 21.180,00',
+                'De R$ 21.180,01 até R$ 28.240,00',
+                'Acima de R$ 28.240,00'
+            ) THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_renda_alta,
+            -- Escola (tp_dependencia_adm_esc como string)
+            ROUND(100.0 * SUM(CASE WHEN tp_dependencia_adm_esc = '4' THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_escola_privada,
+            -- Demografia
+            ROUND(100.0 * SUM(CASE WHEN tp_sexo = 'F' THEN 1 ELSE 0 END) / COUNT(*), 2) as perc_feminino,
+            ROUND(AVG(idade_calculada), 1) as idade_media
+        FROM {TABLE_PARTICIPANTES}
+        WHERE co_municipio_prova IS NOT NULL
+        GROUP BY {group_cols}
+        HAVING COUNT(*) >= {min_participantes}
+        ORDER BY total_participantes DESC
+        """
+        
+        with DatabaseConnection.get_cursor() as cur:
+            cur.execute(query)
+            columns_names = [desc[0] for desc in cur.description]
+            data = cur.fetchall()
+        
+        df = pd.DataFrame(data, columns=columns_names)
+        
+        # Converter numéricas
+        for col in df.columns:
+            if col not in group_by:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar participantes agregados: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=Config.CACHE_TTL, show_spinner="Carregando resultados agregados...")
+def get_resultados_aggregated(
+    min_participantes: int = 30,
+    group_by: List[str] = None
+) -> pd.DataFrame:
+    """
+    Retorna dados de desempenho agregados por município ou outras dimensões.
+    
+    Args:
+        min_participantes: Número mínimo de participantes
+        group_by: Lista de campos para agrupar (padrão: ['co_municipio_prova'])
+        
+    Returns:
+        DataFrame com médias de notas agregadas
+    """
+    try:
+        if group_by is None:
+            group_by = ['co_municipio_prova', 'no_municipio_prova', 'sg_uf_prova', 'regiao_nome_prova']
+        
+        group_cols = ', '.join(group_by)
+        
+        query = f"""
+        SELECT 
+            {group_cols},
+            COUNT(*) as total_participantes,
+            ROUND(AVG(nota_cn_ciencias_da_natureza), 2) as media_cn,
+            ROUND(AVG(nota_ch_ciencias_humanas), 2) as media_ch,
+            ROUND(AVG(nota_lc_linguagens_e_codigos), 2) as media_lc,
+            ROUND(AVG(nota_mt_matematica), 2) as media_mt,
+            ROUND(AVG(nota_redacao), 2) as media_redacao,
+            ROUND(AVG(nota_media_5_notas), 2) as media_geral,
+            ROUND(STDDEV(nota_media_5_notas), 2) as desvio_padrao_geral,
+            ROUND(MIN(nota_media_5_notas), 2) as min_nota_geral,
+            ROUND(MAX(nota_media_5_notas), 2) as max_nota_geral
+        FROM {TABLE_RESULTADOS}
+        WHERE co_municipio_prova IS NOT NULL
+            AND nota_media_5_notas IS NOT NULL
+        GROUP BY {group_cols}
+        HAVING COUNT(*) >= {min_participantes}
+        ORDER BY media_geral DESC
+        """
+        
+        with DatabaseConnection.get_cursor() as cur:
+            cur.execute(query)
+            columns_names = [desc[0] for desc in cur.description]
+            data = cur.fetchall()
+        
+        df = pd.DataFrame(data, columns=columns_names)
+        
+        # Converter numéricas
+        for col in df.columns:
+            if col not in group_by:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar resultados agregados: {e}")
         return pd.DataFrame()
 
 

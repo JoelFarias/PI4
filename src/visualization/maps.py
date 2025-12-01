@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.utils.config import Config
+from src.utils.theme import get_plotly_theme
 
 
 def plot_choropleth_map(df: pd.DataFrame, location_col: str, value_col: str,
