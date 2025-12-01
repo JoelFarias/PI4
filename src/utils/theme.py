@@ -319,17 +319,6 @@ def apply_minimal_theme():
             }
         }
         
-        /* ============================================
-           REMOVER ELEMENTOS DESNECESSÁRIOS
-           ============================================ */
-        
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        
-        .decoration {
-            display: none !important;
-        }
-        
         </style>
     """, unsafe_allow_html=True)
 
